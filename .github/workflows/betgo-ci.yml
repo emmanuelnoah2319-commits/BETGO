@@ -1,0 +1,66 @@
+
+name: BETGO CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: false
+
+      - name: Locate BETGO ZIP
+        id: zip
+        shell: bash
+        run: |
+          ZIP="$(find . -type f -name 'BETGO-phase4-integration-test-guard.zip' -print -quit)"
+          if [ -z "$ZIP" ]; then
+            echo "BETGO ZIP was not found in the repository."
+            exit 1
+          fi
+          echo "path=$ZIP" >> "$GITHUB_OUTPUT"
+
+      - name: Extract BETGO
+        run: |
+          mkdir -p extracted
+          unzip -q "${{ steps.zip.outputs.path }}" -d extracted
+          find extracted -maxdepth 3 -type f | head -100
+
+      - name: Find package.json
+        id: project
+        shell: bash
+        run: |
+          PACKAGE="$(find extracted -type f -name package.json -print -quit)"
+          if [ -z "$PACKAGE" ]; then
+            echo "No package.json found inside the ZIP."
+            exit 1
+          fi
+          echo "dir=$(dirname "$PACKAGE")" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        working-directory: ${{ steps.project.outputs.dir }}
+        run: npm install
+
+      - name: Run project checks
+        working-directory: ${{ steps.project.outputs.dir }}
+        run: npm run check
+
+      - name: Run tests
+        working-directory: ${{ steps.project.outputs.dir }}
+        run: npm test
