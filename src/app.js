@@ -308,7 +308,10 @@ app.get('/payment/return', async (req, res, next) => {
     const payment = await db.collection('payments').findOne({ reference, provider: 'flutterwave' });
     if (!payment) return res.status(404).send(paymentResultPage('Payment reference not found', 'The transaction was verified, but BETGO could not match it to an application. Contact support and provide your Flutterwave transaction ID.'));
     const application = await db.collection('applications').findOne({ _id: payment.applicationId });
-    if (!application || Number(verified.amount) !== Number(payment.amountNgn) || verified.currency !== 'NGN' || verified.customer?.email?.trim().toLowerCase() !== String(application.emailNormalized || application.email).trim().toLowerCase()) {
+    const amountOk = Number(verified.amount) === Number(payment.amountNgn);
+    const currencyOk = verified.currency === 'NGN';
+    if (!application || !amountOk || !currencyOk) {
+      console.warn('payment mismatch (return)', { reference, applicationFound: Boolean(application), amountOk, currencyOk, got: { amount: verified.amount, currency: verified.currency, email: verified.customer?.email }, expected: { amount: payment.amountNgn, email: application?.email } });
       return res.status(400).send(paymentResultPage('Payment details need review', 'The verified transaction does not match the expected application, amount, currency, and customer. BETGO has not activated this subscription from the callback. Contact support.'));
     }
     if (payment.status === 'paid' && application.status === 'active') {
@@ -338,7 +341,12 @@ app.post('/api/payments/flutterwave/webhook', async (req, res, next) => {
     const payment = await db.collection('payments').findOne({ reference: verified.tx_ref });
     if (!payment) return res.status(200).json({ received: true, alreadyProcessed: true });
     const application = await db.collection('applications').findOne({ _id: payment.applicationId });
-    if (!application || Number(verified.amount) !== Number(payment.amountNgn) || verified.currency !== 'NGN' || verified.customer?.email?.trim().toLowerCase() !== application.emailNormalized) return res.status(200).json({ received: true, verified: false });
+    const amountOk = Number(verified.amount) === Number(payment.amountNgn);
+    const currencyOk = verified.currency === 'NGN';
+    if (!application || !amountOk || !currencyOk) {
+      console.warn('payment mismatch (webhook)', { reference: verified.tx_ref, applicationFound: Boolean(application), amountOk, currencyOk, got: { amount: verified.amount, currency: verified.currency, email: verified.customer?.email }, expected: { amount: payment.amountNgn, email: application?.email } });
+      return res.status(200).json({ received: true, verified: false });
+    }
     const emailNormalized = application.emailNormalized;
     let user = await db.collection('users').findOne({ emailNormalized });
     let now = new Date();
