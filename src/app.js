@@ -94,6 +94,10 @@ const loginSchema = z.object({
   password: z.string().min(1).max(1024)
 }).strict();
 
+function escapeHtml(value) {
+  return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('\"', '&quot;').replaceAll("'", '&#39;');
+}
+
 const app = express();
 
 // Render terminates TLS and forwards requests through one trusted proxy layer.
@@ -273,11 +277,50 @@ app.post('/api/admin/applications/:applicationId/approve', csrfProtection, requi
     );
     if (!updated) return res.status(409).json({ error: { code: 'APPLICATION_NOT_PENDING', message: 'Application was reviewed concurrently.' } });
     await db.collection('payments').insertOne({ applicationId: application._id, reference, amountNgn: application.priceNgn, status: 'pending', provider: 'flutterwave', createdAt: now, updatedAt: now });
-    await sendEmail(req.app.locals.config, { to: application.email, subject: 'Your BETGO application is approved', text: `Hello ${application.fullName},\n\nYour application for ${application.bookmaker} has been approved.\n\nSubscription price: NGN ${application.priceNgn.toLocaleString('en-NG')} for 30 days.\nComplete payment securely using this Flutterwave link: ${payment.link}\n\nYour 30-day subscription starts only after Flutterwave confirms successful payment. Do not share your payment details with anyone.` });
+    await sendEmail(req.app.locals.config, {
+      to: application.email,
+      subject: 'Your BETGO application is approved',
+      text: `Hello ${application.fullName},\n\nYour application for ${application.bookmaker} has been approved.\n\nSubscription price: NGN ${application.priceNgn.toLocaleString('en-NG')} for 30 days.\n\nComplete payment securely using this Flutterwave link:\n${payment.link}\n\nYour 30-day subscription starts only after Flutterwave confirms successful payment. Do not share your payment details with anyone.`,
+      html: `<p>Hello ${escapeHtml(application.fullName)},</p><p>Your application for ${escapeHtml(application.bookmaker)} has been approved.</p><p>Subscription price: NGN ${application.priceNgn.toLocaleString('en-NG')} for 30 days.</p><p>Complete payment securely using this Flutterwave link:</p><p><a href="${escapeHtml(payment.link)}">Pay securely with Flutterwave</a></p><p>Your 30-day subscription starts only after Flutterwave confirms successful payment. Do not share your payment details with anyone.</p>`
+    });
     await writeAudit(db, { actorUserId: req.user._id, action: 'application.approve', requestId: req.requestId, details: { applicationId: application._id.toString(), bookmaker: application.bookmaker, amountNgn: application.priceNgn } });
     res.json({ message: 'Application approved; payment link created and email sent.', paymentUrl: payment.link });
   } catch (error) { next(error); }
 });
+
+app.get('/payment/return', async (req, res, next) => {
+  try {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    const transactionId = String(req.query.transaction_id || '');
+    const reference = String(req.query.tx_ref || '');
+    if (!/^\d+$/.test(transactionId) || !/^betgo_[a-fA-F0-9]{24}_[a-fA-F0-9]{32}$/.test(reference)) {
+      return res.status(400).send(paymentResultPage('Payment not verified', 'The payment details returned by Flutterwave are incomplete or invalid. Do not pay again yet; contact BETGO support to check the transaction.'));
+    }
+    if (!req.app.locals.config.flutterwaveSecretKey) {
+      return res.status(503).send(paymentResultPage('Payment check unavailable', 'BETGO could not verify this transaction right now. Your payment has not been activated by this page. Please try again later.'));
+    }
+    const verified = await verifyFlutterwavePayment(req.app.locals.config, transactionId);
+    if (!verified || String(verified.tx_ref) !== reference || String(verified.id) !== transactionId || verified.status !== 'successful') {
+      return res.status(400).send(paymentResultPage('Payment not confirmed', 'Flutterwave has not confirmed a successful matching transaction. Your subscription has not been activated by this page.'));
+    }
+    const db = req.app.locals.db;
+    const payment = await db.collection('payments').findOne({ reference, provider: 'flutterwave' });
+    if (!payment) return res.status(404).send(paymentResultPage('Payment reference not found', 'The transaction was verified, but BETGO could not match it to an application. Contact support and provide your Flutterwave transaction ID.'));
+    const application = await db.collection('applications').findOne({ _id: payment.applicationId });
+    if (!application || Number(verified.amount) !== Number(payment.amountNgn) || verified.currency !== 'NGN' || verified.customer?.email?.trim().toLowerCase() !== String(application.emailNormalized || application.email).trim().toLowerCase()) {
+      return res.status(400).send(paymentResultPage('Payment details need review', 'The verified transaction does not match the expected application, amount, currency, and customer. BETGO has not activated this subscription from the callback. Contact support.'));
+    }
+    if (payment.status === 'paid' && application.status === 'active') {
+      return res.send(paymentResultPage('Payment confirmed', 'Your payment and subscription are confirmed. You can return to BETGO and sign in.'));
+    }
+    return res.send(paymentResultPage('Payment verified', 'Flutterwave confirms your payment. BETGO is waiting for its secure payment-processing webhook to activate your 30-day subscription and send your login details. Do not pay again. If activation email does not arrive shortly, contact BETGO support.'));
+  } catch (error) { next(error); }
+});
+
+function paymentResultPage(title, message) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)} — BETGO</title><style>body{font-family:system-ui,sans-serif;max-width:640px;margin:12vh auto;padding:24px;line-height:1.6;color:#172033}main{border:1px solid #dce2ea;border-radius:16px;padding:28px}h1{font-size:1.6rem}a{color:#1749a5}</style></head><body><main><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p><p><a href="/">Return to BETGO</a></p></main></body></html>`;
+}
 
 app.post('/api/payments/flutterwave/webhook', async (req, res, next) => {
   try {
