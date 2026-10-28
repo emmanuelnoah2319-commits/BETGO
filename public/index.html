@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101820">
+  <meta name="description" content="BETGO private betting management dashboard">
+  <title>BETGO — Private Dashboard</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="BETGO home"><span class="brand-mark">B</span><span>BETGO</span></a>
+    <span class="private-tag">PRIVATE WORKSPACE</span>
+  </header>
+  <main id="main-content" class="shell">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">BETTING MANAGEMENT SYSTEM</p>
+        <h1>One dashboard.<br><span>Clear control.</span></h1>
+        <p class="intro">Manage bookmaker accounts, review bet instructions and enforce financial controls in one place.</p>
+      </div>
+      <div class="status-card">
+        <span class="status-dot"></span>
+        <div><strong>Automatic betting is off</strong><p>Integrations require verified authorization.</p></div>
+      </div>
+    </section>
+    <section id="login-panel" class="panel login-panel">
+      <div class="panel-heading"><div><p class="eyebrow">OWNER ACCESS</p><h2>Sign in to BETGO</h2></div><span class="lock-icon" aria-hidden="true">⌑</span></div>
+      <form id="login-form">
+        <label for="email">Email address</label>
+        <input id="email" name="email" type="email" autocomplete="username" required maxlength="254" placeholder="owner@example.com">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="1024" placeholder="Enter your password">
+        <p id="login-error" class="form-error" role="alert" hidden></p>
+        <button type="submit" id="login-button">Sign in <span aria-hidden="true">→</span></button>
+      </form>
+      <p class="muted small">Registration is private and disabled. An owner account must be provisioned on the server.</p>
+    </section>
+    <section id="dashboard" hidden>
+      <div class="welcome-row"><div><p class="eyebrow">OVERVIEW</p><h2>Workspace overview</h2><p id="welcome"></p></div><button id="logout-button" class="button-secondary">Log out</button></div>
+      <nav class="section-nav" aria-label="Dashboard sections">
+        <a href="#accounts-section">Accounts</a><a href="#limits-section">Safety limits</a><a href="#instructions-section">Instructions</a><a href="#integrations-section">Integrations</a>
+      </nav>
+      <div class="metric-grid">
+        <article class="metric"><span>Account records</span><strong id="account-count">0</strong><small>Records only; not live connections</small></article>
+        <article class="metric"><span>Automatic betting</span><strong class="off-value">OFF</strong><small>Disabled by default</small></article>
+        <article class="metric"><span>Available integrations</span><strong id="integration-count">0 / 5</strong><small>Awaiting approved access</small></article>
+      </div>
+      <section id="accounts-section" class="panel dashboard-section">
+        <div class="panel-heading"><div><p class="eyebrow">ACCOUNT RECORDS</p><h2>Manage bookmaker accounts</h2></div><span class="pill">Not connected</span></div>
+        <p class="muted account-warning">Add labels and private notes for your accounts. Do not enter bookmaker passwords, OTPs, recovery codes or payment details here.</p>
+        <p class="field-hint">These are reference records only. BETGO is not signed in to these bookmaker accounts.</p>
+        <form id="account-form" class="account-form">
+          <div class="form-grid">
+            <div><label for="account-name">Account label</label><input id="account-name" name="displayName" required maxlength="60" placeholder="e.g. Main SportyBet"></div>
+            <div><label for="account-platform">Bookmaker</label><select id="account-platform" name="platform" required><option value="SportyBet">SportyBet</option><option value="Football.com Nigeria">Football.com Nigeria</option><option value="BetWinner">BetWinner</option><option value="Sokabet">Sokabet</option><option value="MSport">MSport</option></select></div>
+          </div>
+          <label for="account-notes">Notes (optional)</label><textarea id="account-notes" name="notes" rows="2" maxlength="300" placeholder="Non-sensitive notes only"></textarea>
+          <button id="create-account-button" type="submit">Add account record</button>
+        </form>
+        <p id="account-message" role="status" hidden></p>
+        <div id="account-list" class="account-list" aria-live="polite"><p class="empty-state">Loading account records…</p></div>
+      </section>
+      <section id="limits-section" class="panel dashboard-section">
+        <div class="panel-heading"><div><p class="eyebrow">FINANCIAL GUARDRAILS</p><h2>Stake and exposure limits</h2></div><span class="pill">Enforced by API</span></div>
+        <p class="muted">Amounts are in Nigerian naira (NGN). Limits are checked server-side before an instruction is recorded. Daily loss exposure conservatively includes unsettled reserved stakes. This does not submit bets.</p>
+        <form id="limits-form" class="account-form"><div class="form-grid">
+          <div><label for="max-stake">Maximum stake per instruction (₦)</label><input id="max-stake" type="number" min="1" step="0.01" required></div>
+          <div><label for="daily-stake">Global daily stake limit (₦)</label><input id="daily-stake" type="number" min="1" step="0.01" required></div>
+          <div><label for="daily-loss">Daily loss/exposure limit (₦)</label><input id="daily-loss" type="number" min="1" step="0.01" required></div>
+          <div><label for="account-daily-stake">Per-account daily stake limit (₦)</label><input id="account-daily-stake" type="number" min="1" step="0.01" required></div>
+          <div><label for="max-open">Maximum open instructions</label><input id="max-open" type="number" min="1" max="100" step="1" required></div>
+        </div><button id="save-limits-button" type="submit">Save safety limits</button></form><p id="limits-message" role="status" hidden></p>
+      </section>
+      <section id="instructions-section" class="panel dashboard-section">
+        <div class="panel-heading"><div><p class="eyebrow">BET TRACKING</p><h2>Prepare an instruction</h2></div><span class="pill">No submission</span></div>
+        <p class="muted">This records a planned instruction for review and reserves against your daily limits. It never logs into a bookmaker or places a bet.</p>
+        <p class="field-hint">Create an instruction only when you are ready to review its event, selection and stake. Approval still does not place a bet.</p>
+        <form id="instruction-form" class="account-form"><div class="form-grid">
+          <div><label for="instruction-account">Account record</label><select id="instruction-account" required><option value="">Add an account record first</option></select></div>
+          <div><label for="instruction-stake">Stake (₦)</label><input id="instruction-stake" type="number" min="1" step="0.01" required></div>
+          <div><label for="instruction-event">Event / fixture</label><input id="instruction-event" required maxlength="160" placeholder="e.g. Team A vs Team B"></div>
+          <div><label for="instruction-selection">Selection</label><input id="instruction-selection" required maxlength="160" placeholder="e.g. Home win"></div>
+        </div><label for="instruction-notes">Notes (optional)</label><textarea id="instruction-notes" rows="2" maxlength="300"></textarea><button id="create-instruction-button" type="submit">Create review instruction</button></form>
+        <p id="instruction-message" role="status" hidden></p><div id="instruction-list" class="account-list" aria-live="polite"><p class="empty-state">Loading instructions…</p></div>
+      </section>
+      <section id="integrations-section" class="panel dashboard-section">
+        <div class="panel-heading"><div><p class="eyebrow">BOOKMAKER CONNECTIONS</p><h2>Integration status</h2></div><span class="pill">Not connected</span></div>
+        <div id="integration-list" class="integration-list"></div>
+      </section>
+      <section class="panel emergency">
+        <div><p class="eyebrow">SAFETY CONTROL</p><h2>Emergency stop</h2><p class="muted">New betting submissions are disabled in this foundation. The control will become operational when the submission engine is implemented.</p></div>
+        <button class="button-danger" disabled title="Bet submission is not enabled">Stop submissions</button>
+      </section>
+      <p id="dashboard-error" class="form-error" role="alert" hidden></p>
+    </section>
+    <footer><span>BETGO © <span id="year"></span></span><span>Secure by design · No simulated live data</span></footer>
+  </main>
+</body>
+</html>

@@ -4,12 +4,16 @@
   "private": true,
   "type": "module",
   "description": "BETGO private betting management foundation; bookmaker integrations disabled pending authorization.",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "test": "node --test",
-    "check": "node --check src/server.js && node --check src/app.js"
+    "check": "node --check src/server.js && node --check src/app.js && node --check public/app.js",
+    "doctor": "node scripts/doctor.js",
+    "test:integration": "node scripts/run-mongo-integration.js"
   },
   "dependencies": {
     "argon2": "^0.44.0",
