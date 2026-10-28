@@ -169,3 +169,8 @@ The private dashboard now has a **Load live fixtures** action backed by `GET /ap
 This is an unofficial, changeable data feed. It does not authenticate a SportyBet user, fetch account balances, submit a wager, or enable any connector. Odds can change and are not guaranteed current. The bookmaker integration registry remains unavailable for bet placement. `SPORTYBET_API_BASE_URL` can optionally override the default `https://www.sportybet.com` for testing; do not point production at an untrusted host.
 
 Unit tests cover response normalization, short caching, malformed event IDs, provider errors and bounded query parameters. They use mocked HTTP responses and do not prove that SportyBet's live endpoint will remain available or that any wager can be placed.
+
+
+## Member subscription scope
+
+Members are assigned to the bookmaker selected in their approved application. BETGO displays the subscription expiry and permits multiple account labels for that bookmaker only. This is a server-enforced access rule, not a live bookmaker connection. Real bookmaker login and wager placement remain disabled pending a verified and authorized integration.

@@ -314,7 +314,7 @@ app.post('/api/me/password', csrfProtection, requireAuthLazy, async (req, res, n
 
 app.get('/api/me', requireAuthLazy, (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
-  res.json({ user: { id: req.user._id.toString(), email: req.user.email, role: req.user.role, mustChangePassword: req.user.mustChangePassword === true, subscriptionExpiresAt: req.user.subscriptionExpiresAt || null } });
+  res.json({ user: { id: req.user._id.toString(), email: req.user.email, fullName: req.user.fullName || '', role: req.user.role, bookmaker: req.user.bookmaker || null, mustChangePassword: req.user.mustChangePassword === true, subscriptionStartedAt: req.user.subscriptionStartedAt || null, subscriptionExpiresAt: req.user.subscriptionExpiresAt || null } });
 });
 
 app.get('/api/admin/operations', requireAuthLazy, requireOwner, async (req, res) => {
@@ -379,8 +379,10 @@ app.get('/api/admin/status', requireAuthLazy, requireOwner, async (req, res) => 
 });
 
 app.get('/api/accounts', requireAuthLazy, async (req, res) => {
+  const accountFilter = { ownerUserId: req.user._id };
+  if (req.user.role !== 'owner' && req.user.bookmaker) accountFilter.platform = req.user.bookmaker;
   const accounts = await req.app.locals.db.collection('bettingAccounts')
-    .find({ ownerUserId: req.user._id })
+    .find(accountFilter)
     .sort({ createdAt: -1 }).limit(200).toArray();
   res.setHeader('Cache-Control', 'no-store');
   res.json({ accounts: accounts.map(publicAccount) });
@@ -390,6 +392,9 @@ app.post('/api/accounts', csrfProtection, requireAuthLazy, async (req, res, next
   try {
     const parsed = accountCreateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Provide a valid display name, supported platform and optional notes.' } });
+    if (req.user.role !== 'owner' && parsed.data.platform !== req.user.bookmaker) {
+      return res.status(403).json({ error: { code: 'BOOKMAKER_NOT_IN_SUBSCRIPTION', message: 'Your subscription only includes the bookmaker selected when you applied.' } });
+    }
     const now = new Date();
     const account = {
       ownerUserId: req.user._id,
@@ -434,8 +439,10 @@ app.patch('/api/accounts/:accountId', csrfProtection, requireAuthLazy, async (re
       if (!existing) return res.status(404).json({ error: { code: 'ACCOUNT_NOT_FOUND', message: 'Account not found.' } });
       return res.status(409).json({ error: { code: 'INTEGRATION_NOT_AUTHORIZED', message: 'This account cannot be enabled until an approved integration is verified.' } });
     }
+    const updateFilter = { _id: new ObjectId(req.params.accountId), ownerUserId: req.user._id };
+    if (req.user.role !== 'owner' && req.user.bookmaker) updateFilter.platform = req.user.bookmaker;
     const result = await req.app.locals.db.collection('bettingAccounts').findOneAndUpdate(
-      { _id: new ObjectId(req.params.accountId), ownerUserId: req.user._id },
+      updateFilter,
       { $set: update }, { returnDocument: 'after' }
     );
     if (!result) return res.status(404).json({ error: { code: 'ACCOUNT_NOT_FOUND', message: 'Account not found.' } });
@@ -524,6 +531,7 @@ app.post('/api/bet-instructions', csrfProtection, requireAuthLazy, async (req, r
     const accountId = new ObjectId(input.accountId);
     const account = await db.collection('bettingAccounts').findOne({ _id: accountId, ownerUserId: req.user._id });
     if (!account) return res.status(404).json({ error: { code: 'ACCOUNT_NOT_FOUND', message: 'Account record not found.' } });
+    if (req.user.role !== 'owner' && account.platform !== req.user.bookmaker) return res.status(403).json({ error: { code: 'BOOKMAKER_NOT_IN_SUBSCRIPTION', message: 'This account is outside your subscribed bookmaker.' } });
     const policies = db.collection('safetyPolicies');
     await policies.updateOne({ ownerUserId: req.user._id }, { $setOnInsert: { ...DEFAULT_SAFETY_POLICY, ownerUserId: req.user._id, openInstructionCount: 0, createdAt: new Date() } }, { upsert: true });
     await policies.updateOne({ ownerUserId: req.user._id, openInstructionCount: { $exists: false } }, { $set: { openInstructionCount: 0 } });

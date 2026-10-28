@@ -48,3 +48,16 @@ Set `RESEND_API_KEY`, a verified `EMAIL_FROM`, `FLW_SECRET_KEY`, and a strong ra
 ### Verification status
 
 Syntax checks were run for all changed JavaScript files. Full `npm test` and integration tests still need to run in the repository's normal Node 22 environment with dependencies installed; payment and email providers also require live staging verification.
+
+
+## Phase 6 — Member dashboard and bookmaker-scoped account records
+
+- `/api/me` now returns the member's subscribed bookmaker and subscription start/expiry timestamps (never credentials).
+- Member dashboard shows the subscribed bookmaker, expiry date and estimated days remaining. Owner/admin views remain separate.
+- Members can create multiple account reference records only for the bookmaker attached to their paid subscription. The API enforces this; disabling other select options in the browser is only a usability aid.
+- Member account listing and updates are scoped to the subscribed bookmaker. Bet-instruction creation independently checks the selected account's bookmaker against the member's subscription.
+- These are still reference records, not authenticated bookmaker connections. No credentials are collected, no odds/fixtures are persisted, and no wager is submitted.
+
+### Verification status
+
+`node --check` passed for `src/app.js`, `public/app.js`, and `src/config/env.js`. The three Flutterwave payment-service tests passed. The full suite and MongoDB integration tests were not run in this environment.

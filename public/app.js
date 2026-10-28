@@ -122,6 +122,16 @@ async function loadDashboard() {
     const { user } = await request('/api/me'); $('#welcome').textContent = `Signed in as ${user.email}`;
     $('#login-panel').hidden = true; $('#dashboard').hidden = false; $('#dashboard-error').hidden = true;
     $('#admin-applications-section').hidden = user.role !== 'owner';
+    $('#member-subscription-panel').hidden = user.role === 'owner';
+    if (user.role !== 'owner') {
+      $('#member-bookmaker').textContent = user.bookmaker || 'Not assigned';
+      const expiry = user.subscriptionExpiresAt ? new Date(user.subscriptionExpiresAt) : null;
+      $('#member-expiry').textContent = expiry && !Number.isNaN(expiry.getTime()) ? expiry.toLocaleDateString() : 'Not available';
+      const days = expiry ? Math.max(0, Math.ceil((expiry.getTime() - Date.now()) / 86400000)) : null;
+      $('#member-days-left').textContent = days === null ? 'Contact support if this looks incorrect.' : days === 0 ? 'Subscription expired' : `${days} day${days === 1 ? '' : 's'} remaining`;
+      for (const option of $('#account-platform').options) option.disabled = option.value !== user.bookmaker;
+      if (user.bookmaker) $('#account-platform').value = user.bookmaker;
+    } else { for (const option of $('#account-platform').options) option.disabled = false; }
     $('#password-change-panel').hidden = !user.mustChangePassword;
     if (user.mustChangePassword) return;
     await Promise.all([loadAccounts(), loadIntegrations(), loadSafetyPolicy(), loadInstructions(), ...(user.role === 'owner' ? [loadApplications()] : [])]);
