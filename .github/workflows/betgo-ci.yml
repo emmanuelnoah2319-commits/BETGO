@@ -1,66 +1,65 @@
 
-name: BETGO CI
+name: Apply BETGO ZIP
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  test:
+  apply-zip:
     runs-on: ubuntu-latest
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: false
-
-      - name: Locate BETGO ZIP
-        id: zip
-        shell: bash
+      - name: Extract BETGO ZIP
         run: |
-          ZIP="$(find . -type f -name 'BETGO-phase4-integration-test-guard.zip' -print -quit)"
-          if [ -z "$ZIP" ]; then
-            echo "BETGO ZIP was not found in the repository."
+          set -euo pipefail
+          mkdir -p /tmp/betgo-extracted
+          unzip -q BETGO-phase4-integration-test-guard.zip -d /tmp/betgo-extracted
+
+          echo "Files inside ZIP:"
+          find /tmp/betgo-extracted -maxdepth 3 -type f | head -100
+
+          PACKAGE="$(find /tmp/betgo-extracted -name package.json -type f -print -quit)"
+          test -n "$PACKAGE" || {
+            echo "ERROR: No package.json found in ZIP"
             exit 1
-          fi
-          echo "path=$ZIP" >> "$GITHUB_OUTPUT"
+          }
 
-      - name: Extract BETGO
+          echo "PROJECT_DIR=$(dirname "$PACKAGE")" >> "$GITHUB_ENV"
+
+      - name: Apply project files
         run: |
-          mkdir -p extracted
-          unzip -q "${{ steps.zip.outputs.path }}" -d extracted
-          find extracted -maxdepth 3 -type f | head -100
+          set -euo pipefail
 
-      - name: Find package.json
-        id: project
-        shell: bash
+          SOURCE="$PROJECT_DIR"
+
+          # Copy files, but preserve GitHub workflows and repository metadata.
+          rsync -a \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='node_modules/' \
+            --exclude='.env' \
+            --exclude='BETGO-phase4-integration-test-guard.zip' \
+            "$SOURCE/" ./
+
+          git status --short
+
+      - name: Commit applied files
         run: |
-          PACKAGE="$(find extracted -type f -name package.json -print -quit)"
-          if [ -z "$PACKAGE" ]; then
-            echo "No package.json found inside the ZIP."
-            exit 1
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A -- .
+          if git diff --cached --quiet; then
+            echo "No changes to apply."
+            exit 0
           fi
-          echo "dir=$(dirname "$PACKAGE")" >> "$GITHUB_OUTPUT"
 
-      - name: Install dependencies
-        working-directory: ${{ steps.project.outputs.dir }}
-        run: npm install
-
-      - name: Run project checks
-        working-directory: ${{ steps.project.outputs.dir }}
-        run: npm run check
-
-      - name: Run tests
-        working-directory: ${{ steps.project.outputs.dir }}
-        run: npm test
+          git commit -m "Apply BETGO ZIP project files"
+          git push
