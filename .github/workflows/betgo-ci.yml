@@ -1,65 +1,34 @@
 
-name: Apply BETGO ZIP
+name: BETGO Tests
 
 on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply-zip:
+  test:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check out repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract BETGO ZIP
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/betgo-extracted
-          unzip -q BETGO-phase4-integration-test-guard.zip -d /tmp/betgo-extracted
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
-          echo "Files inside ZIP:"
-          find /tmp/betgo-extracted -maxdepth 3 -type f | head -100
+      - name: Install dependencies
+        run: npm install
 
-          PACKAGE="$(find /tmp/betgo-extracted -name package.json -type f -print -quit)"
-          test -n "$PACKAGE" || {
-            echo "ERROR: No package.json found in ZIP"
-            exit 1
-          }
+      - name: Check JavaScript syntax
+        run: npm run check
 
-          echo "PROJECT_DIR=$(dirname "$PACKAGE")" >> "$GITHUB_ENV"
-
-      - name: Apply project files
-        run: |
-          set -euo pipefail
-
-          SOURCE="$PROJECT_DIR"
-
-          # Copy files, but preserve GitHub workflows and repository metadata.
-          rsync -a \
-            --exclude='.git/' \
-            --exclude='.github/' \
-            --exclude='node_modules/' \
-            --exclude='.env' \
-            --exclude='BETGO-phase4-integration-test-guard.zip' \
-            "$SOURCE/" ./
-
-          git status --short
-
-      - name: Commit applied files
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add -A -- .
-          if git diff --cached --quiet; then
-            echo "No changes to apply."
-            exit 0
-          fi
-
-          git commit -m "Apply BETGO ZIP project files"
-          git push
+      - name: Run tests
+        run: npm test
