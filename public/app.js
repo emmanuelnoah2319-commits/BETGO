@@ -139,6 +139,60 @@ $('#account-form').addEventListener('submit', async (event) => {
   catch (error) { showDashboardMessage(error.message, true); }
   finally { button.disabled = false; button.textContent = 'Add account record'; }
 });
+$('#load-sportybet-fixtures').addEventListener('click', async () => {
+  const button = $('#load-sportybet-fixtures'); const list = $('#sportybet-fixtures-list');
+  button.disabled = true; button.textContent = 'Loading…'; showMessage('sportybet-fixtures-message');
+  try {
+    const result = await request('/api/sportybet/fixtures?limit=30&timeline=168');
+    list.replaceChildren();
+    if (!result.fixtures.length) list.append(element('p', 'empty-state', 'SportyBet returned no upcoming fixtures for this window.'));
+    for (const fixture of result.fixtures) {
+      const card = element('article', 'fixture-card');
+      card.append(element('strong', '', `${fixture.homeTeam} vs ${fixture.awayTeam}`));
+      card.append(element('p', 'fixture-meta', `${fixture.tournament || 'Football'} · ${fixture.startTime ? new Date(fixture.startTime).toLocaleString() : 'Start time unavailable'}`));
+      const odds = element('div', 'fixture-odds');
+      const market = fixture.markets.find((item) => item.marketId === '1' && Array.isArray(item.outcomes));
+      if (market) {
+        for (const outcome of market.outcomes) {
+          const label = outcome.name || `Outcome ${outcome.outcomeId}`;
+          const price = Number(outcome.odds);
+          const hasPrice = Number.isFinite(price) && price > 1;
+          const priceText = hasPrice ? price.toFixed(2) : '—';
+          const row = element('div', 'fixture-outcome');
+          row.append(element('span', '', `${label}: ${priceText}`));
+          const use = element('button', 'button-secondary fixture-use-selection', 'Use selection');
+          use.type = 'button';
+          use.disabled = !hasPrice || outcome.active !== true || fixture.matchStatus !== 'not_started';
+          use.title = use.disabled ? 'This outcome is inactive or its price is unavailable.' : 'Copy this event and price snapshot into the review form.';
+          use.addEventListener('click', () => {
+            const account = [...$('#instruction-account').options].find((option) => option.value && option.textContent.includes('SportyBet'));
+            if (account) $('#instruction-account').value = account.value;
+            $('#instruction-event').value = `${fixture.homeTeam} vs ${fixture.awayTeam}`.slice(0, 160);
+            const marketName = market.marketName || '1X2';
+            const snapshotTime = result.fetchedAt ? new Date(result.fetchedAt).toLocaleString() : 'time unavailable';
+            $('#instruction-selection').value = `${marketName}: ${label} @ ${priceText} (snapshot)` .slice(0, 160);
+            const note = `SportyBet odds snapshot: ${priceText}; fetched ${snapshotTime}. Recheck odds before any manual bet. BETGO has not placed a bet.`;
+            $('#instruction-notes').value = note.slice(0, 500);
+            $('#instruction-form').scrollIntoView({ behavior: 'smooth', block: 'center' });
+            $('#instruction-stake').focus();
+            showMessage('instruction-message', account ? 'Selection copied with a timestamped odds snapshot. Enter your stake and review before creating an instruction.' : 'Selection copied. Add a SportyBet account record, then choose it before creating the instruction.');
+          });
+          row.append(use);
+          odds.append(row);
+        }
+      }
+      if (odds.childElementCount) card.append(odds);
+      else card.append(element('p', 'muted small', 'No 1X2 odds included in this response.'));
+      list.append(card);
+    }
+    const time = result.fetchedAt ? new Date(result.fetchedAt).toLocaleTimeString() : 'unknown time';
+    showMessage('sportybet-fixtures-message', `Received ${result.fixtures.length} fixtures · data timestamp ${time}${result.cached ? ' · cached response' : ''}. Odds are not guaranteed current.`);
+  } catch (error) {
+    list.replaceChildren(element('p', 'empty-state', 'No fixture data was loaded.'));
+    showMessage('sportybet-fixtures-message', error.message, true);
+  } finally { button.disabled = false; button.textContent = 'Load live fixtures'; }
+});
+
 $('#logout-button').addEventListener('click', async () => {
   try { await mutate('/api/auth/logout', 'POST'); showLogin(); }
   catch (error) { $('#dashboard-error').hidden = false; $('#dashboard-error').textContent = error.message; }

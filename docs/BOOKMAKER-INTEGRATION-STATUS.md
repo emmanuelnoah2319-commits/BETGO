@@ -40,3 +40,9 @@ A target can be marked available only after all of these are verified:
 7. Stake limits, explicit enablement, emergency stop, audit events and idempotency are enforced before the live connector is enabled.
 
 Until then, all five connectors remain unavailable. The app must not submit to undocumented endpoints or claim a wager succeeded without provider confirmation.
+
+## SportyBet odds-to-instruction handoff (2026-10-28)
+
+The read-only fixtures panel now provides a `Use selection` action for an active 1X2 outcome with a valid decimal price. It copies the fixture and selected outcome into BETGO's existing review-instruction form, selects an existing SportyBet reference account when available, and records the fetched time/price snapshot in the notes. Inactive outcomes or missing/invalid prices are disabled. The UI explicitly warns that the odds are a snapshot and that BETGO has not placed a wager. This is still a manual review workflow; no bookmaker login or wager submission is performed.
+
+Validation: `node --check public/app.js`, `node --check src/app.js`, and `node --test test/sportybet-data.test.js` passed locally. A full test run could not complete because the package install timed out and dependencies such as `dotenv` were unavailable in the temporary test directory. MongoDB integration tests still require an isolated `MONGO_TEST_URI`.

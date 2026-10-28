@@ -90,6 +90,12 @@
       <section id="integrations-section" class="panel dashboard-section">
         <div class="panel-heading"><div><p class="eyebrow">BOOKMAKER CONNECTIONS</p><h2>Integration status</h2></div><span class="pill">Not connected</span></div>
         <div id="integration-list" class="integration-list"></div>
+        <div class="provider-data-panel">
+          <div class="panel-heading"><div><p class="eyebrow">SPORTYBET · READ-ONLY</p><h3>Upcoming football fixtures</h3></div><button id="load-sportybet-fixtures" type="button" class="button-secondary">Load live fixtures</button></div>
+          <p class="muted small">Uses SportyBet's undocumented public web endpoint. Fixtures and odds may change; this does not connect your betting account or place a wager.</p>
+          <p id="sportybet-fixtures-message" role="status" hidden></p>
+          <div id="sportybet-fixtures-list" class="account-list" aria-live="polite"><p class="empty-state">Tap “Load live fixtures” to request current data.</p></div>
+        </div>
       </section>
       <section class="panel emergency">
         <div><p class="eyebrow">SAFETY CONTROL</p><h2>Emergency stop</h2><p class="muted">New betting submissions are disabled in this foundation. The control will become operational when the submission engine is implemented.</p></div>

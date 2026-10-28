@@ -10,6 +10,7 @@ import { login, revokeSession } from './services/auth.js';
 import { requireAuth, requireOwner } from './middleware/auth.js';
 import { writeAudit } from './services/audit.js';
 import { listBookmakerIntegrations } from './integrations/bookmakers.js';
+import { sportyBetDataClient } from './integrations/sportybet-data.js';
 import { CANCELLABLE_INSTRUCTION_STATUSES, transitionInstructionStatus } from './services/instruction-lifecycle.js';
 import { recoverPendingReservationReleases, releaseInstructionReservation } from './services/instruction-reservations.js';
 import { getOperationalControl, setEmergencyStop } from './services/operational-control.js';
@@ -471,6 +472,32 @@ function publicInstruction(instruction) {
 app.get('/api/integrations', requireAuthLazy, (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.json({ integrations: listBookmakerIntegrations() });
+});
+
+// Read-only SportyBet public web-data adapter. This does not authenticate an account or place wagers.
+app.get('/api/sportybet/fixtures', requireAuthLazy, async (req, res) => {
+  try {
+    const limit = req.query.limit === undefined ? 30 : Number(req.query.limit);
+    const timeline = req.query.timeline === undefined ? 168 : Number(req.query.timeline);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !Number.isInteger(timeline) || timeline < 1 || timeline > 720) {
+      return res.status(400).json({ error: { code: 'INVALID_QUERY', message: 'limit must be 1–100 and timeline must be 1–720 hours.' } });
+    }
+    const data = await sportyBetDataClient.getFixtures({ limit, timeline });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(data);
+  } catch (error) {
+    res.status(error.status || 502).json({ error: { code: error.code || 'SPORTYBET_UNAVAILABLE', message: error.message || 'SportyBet data is temporarily unavailable.' } });
+  }
+});
+
+app.get('/api/sportybet/events/:eventId/markets', requireAuthLazy, async (req, res) => {
+  try {
+    const data = await sportyBetDataClient.getMarkets(req.params.eventId);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(data);
+  } catch (error) {
+    res.status(error.status || 502).json({ error: { code: error.code || 'SPORTYBET_UNAVAILABLE', message: error.message || 'SportyBet markets are temporarily unavailable.' } });
+  }
 });
 
 app.use((req, res) => res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Route not found', requestId: req.requestId } }));

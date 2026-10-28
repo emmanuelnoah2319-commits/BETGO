@@ -161,3 +161,11 @@ BETGO_CONFIRM_DISPOSABLE_MONGO=true npm run test:integration
 ```
 
 The runner refuses to start unless `MONGO_TEST_URI` is set and `BETGO_CONFIRM_DISPOSABLE_MONGO=true` explicitly confirms the server is dedicated to disposable tests. It rejects URI paths that look like `prod`, `production`, or `live`. The test creates a uniquely named `betgo_test_*` database and drops only that temporary database in cleanup. **Never point `MONGO_TEST_URI` at production or a database containing real user data.** The integration test verifies the submission uniqueness indexes, emergency-stop fail-closed behavior, idempotency replay, competing state transitions, and stale-submission recovery. The test command now fails closed instead of silently reporting a skipped integration test when its required environment is missing.
+
+## SportyBet unofficial read-only data adapter (new increment)
+
+The private dashboard now has a **Load live fixtures** action backed by `GET /api/sportybet/fixtures` and a read-only `GET /api/sportybet/events/:eventId/markets` route. These routes use SportyBet's undocumented public web endpoint for Nigeria (`/api/ng/factsCenter/pcUpcomingEvents`) and require a BETGO login. Fixture responses are normalized server-side, limited to 100 events per request, bounded to a 1–720 hour timeline, timed out after 10 seconds, and cached for 30 seconds. Only current provider response data is shown; provider/network errors are returned as errors rather than fabricated fixtures.
+
+This is an unofficial, changeable data feed. It does not authenticate a SportyBet user, fetch account balances, submit a wager, or enable any connector. Odds can change and are not guaranteed current. The bookmaker integration registry remains unavailable for bet placement. `SPORTYBET_API_BASE_URL` can optionally override the default `https://www.sportybet.com` for testing; do not point production at an untrusted host.
+
+Unit tests cover response normalization, short caching, malformed event IDs, provider errors and bounded query parameters. They use mocked HTTP responses and do not prove that SportyBet's live endpoint will remain available or that any wager can be placed.

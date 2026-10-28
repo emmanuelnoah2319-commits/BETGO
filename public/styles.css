@@ -66,3 +66,17 @@ textarea { min-height: 90px; }
   html { scroll-behavior: auto; }
   button { transition: none; }
 }
+
+.provider-data-panel { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid var(--border, #dfe4e8); }
+.provider-data-panel h3 { margin: 0; font-size: 1.05rem; }
+.fixture-card { border: 1px solid var(--border, #dfe4e8); border-radius: 12px; padding: 1rem; background: var(--surface, #fff); }
+.fixture-card strong { display: block; }
+.fixture-card .fixture-meta { margin: .35rem 0; color: var(--muted, #68727d); font-size: .85rem; }
+.fixture-odds { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .65rem; }
+.fixture-odds span { border: 1px solid var(--border, #dfe4e8); border-radius: 8px; padding: .35rem .55rem; font-size: .85rem; }
+
+
+/* Live odds-to-instruction handoff */
+.fixture-outcome { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; padding: 0.45rem 0; }
+.fixture-use-selection { padding: 0.4rem 0.65rem; font-size: 0.85rem; }
+.fixture-use-selection:disabled { opacity: 0.5; cursor: not-allowed; }
