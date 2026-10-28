@@ -67,12 +67,12 @@ export function createSportyBetDataClient({
     }
   }
 
-  async function getFixtures({ limit = 30, timeline = 168 } = {}) {
+  async function getFixtures({ limit = 30, timeline = 168, forceRefresh = false } = {}) {
     const safeLimit = Math.max(1, Math.min(100, Number.parseInt(limit, 10) || 30));
     const safeTimeline = Math.max(1, Math.min(720, Number.parseInt(timeline, 10) || 168));
     const key = `fixtures:${safeLimit}:${safeTimeline}`;
     const cached = cache.get(key);
-    if (cached && cached.expiresAt > now()) return { ...cached.value, cached: true };
+    if (!forceRefresh && cached && cached.expiresAt > now()) return { ...cached.value, cached: true };
 
     const url = new URL(`/api/ng/factsCenter/pcUpcomingEvents`, baseUrl);
     url.search = new URLSearchParams({
@@ -99,7 +99,7 @@ export function createSportyBetDataClient({
     if (typeof eventId !== 'string' || !/^sr:match:\d+$/.test(eventId)) {
       throw providerError('Invalid SportyBet event ID.', 'INVALID_EVENT_ID', 400);
     }
-    const result = await getFixtures({ limit: 100, timeline: 720 });
+    const result = await getFixtures({ limit: 100, timeline: 720, forceRefresh: true });
     const fixture = result.fixtures.find((item) => item.eventId === eventId);
     if (!fixture) throw providerError('Event was not found in the current upcoming fixtures. It may have started or expired.', 'EVENT_NOT_FOUND', 404);
     return { provider: 'SportyBet', fetchedAt: result.fetchedAt, eventId, markets: fixture.markets, cached: result.cached };

@@ -90,14 +90,16 @@
       </section>
       <section id="instructions-section" class="panel dashboard-section">
         <div class="panel-heading"><div><p class="eyebrow">BET TRACKING</p><h2>Prepare an instruction</h2></div><span class="pill">No submission</span></div>
-        <p class="muted">This records a planned instruction for review and reserves against your daily limits. It never logs into a bookmaker or places a bet.</p>
+        <p class="muted">Build a ticket from current read-only SportyBet odds. The server applies your maximum net-profit cap and daily safety limits before recording the review instruction. This does not log into a bookmaker or place a bet.</p>
         <p class="field-hint">Create an instruction only when you are ready to review its event, selection and stake. Approval still does not place a bet.</p>
         <form id="instruction-form" class="account-form"><div class="form-grid">
           <div><label for="instruction-account">Account record</label><select id="instruction-account" required><option value="">Add an account record first</option></select></div>
-          <div><label for="instruction-stake">Stake (₦)</label><input id="instruction-stake" type="number" min="1" step="0.01" required></div>
+          <div><label for="instruction-stake">Requested stake (₦)</label><input id="instruction-stake" type="number" min="1" step="0.01" value="5000" required></div>
+          <div><label for="instruction-odds">Selected decimal odds</label><input id="instruction-odds" type="number" min="1.01" max="1000" step="0.01" readonly placeholder="Choose an active outcome"></div>
+          <div><label for="instruction-max-profit">Maximum net profit (₦)</label><input id="instruction-max-profit" type="number" min="1" step="0.01" value="10000" required></div>
           <div><label for="instruction-event">Event / fixture</label><input id="instruction-event" required maxlength="160" placeholder="e.g. Team A vs Team B"></div>
           <div><label for="instruction-selection">Selection</label><input id="instruction-selection" required maxlength="160" placeholder="e.g. Home win"></div>
-        </div><label for="instruction-notes">Notes (optional)</label><textarea id="instruction-notes" rows="2" maxlength="300"></textarea><button id="create-instruction-button" type="submit">Create review instruction</button></form>
+        </div><p id="ticket-calculation" class="field-hint" aria-live="polite">Choose an active SportyBet outcome to calculate a stake against your maximum net-profit cap.</p><label for="instruction-notes">Notes (optional)</label><textarea id="instruction-notes" rows="2" maxlength="300"></textarea><button id="create-instruction-button" type="submit">Create review instruction</button></form>
         <p id="instruction-message" role="status" hidden></p><div id="instruction-list" class="account-list" aria-live="polite"><p class="empty-state">Loading instructions…</p></div>
       </section>
       <section id="integrations-section" class="panel dashboard-section">

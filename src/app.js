@@ -17,6 +17,7 @@ import { recoverPendingReservationReleases, releaseInstructionReservation } from
 import { getOperationalControl, setEmergencyStop } from './services/operational-control.js';
 import { sendEmail } from './services/notifications.js';
 import { initializeFlutterwavePayment, verifyFlutterwavePayment } from './services/payments.js';
+import { capStakeToNetProfit } from './services/profit-cap.js';
 
 const supportedPlatforms = ['SportyBet', 'Football.com Nigeria', 'BetWinner', 'Sokabet', 'MSport'];
 const accountCreateSchema = z.object({
@@ -53,8 +54,24 @@ const instructionCreateSchema = z.object({
   selectionLabel: z.string().trim().min(1).max(160),
   eventLabel: z.string().trim().min(1).max(160),
   notes: z.string().trim().max(300).optional().default(''),
+  oddsDecimal: z.number().finite().gt(1).max(1000).optional(),
+  eventId: z.string().regex(/^sr:match:\d+$/).optional(),
+  marketId: z.string().min(1).max(40).optional(),
+  outcomeId: z.string().min(1).max(40).optional(),
+  maxNetProfitMinor: z.number().int().min(100).max(1_000_000_000).optional(),
   idempotencyKey: z.string().uuid()
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  const providerFields = [value.eventId, value.marketId, value.outcomeId];
+  if (providerFields.some((field) => field !== undefined) && providerFields.some((field) => field === undefined)) {
+    ctx.addIssue({ code: 'custom', path: ['eventId'], message: 'Event, market and outcome identifiers must be provided together.' });
+  }
+  if ((value.oddsDecimal === undefined) !== (value.maxNetProfitMinor === undefined)) {
+    ctx.addIssue({ code: 'custom', path: ['oddsDecimal'], message: 'Odds and maximum net profit must be provided together.' });
+  }
+  if (value.eventId && value.oddsDecimal === undefined) {
+    ctx.addIssue({ code: 'custom', path: ['oddsDecimal'], message: 'A selected bookmaker outcome requires its odds and maximum net-profit cap.' });
+  }
+});
 
 const DEFAULT_SAFETY_POLICY = Object.freeze({
   maxStakeMinor: 500_000,
@@ -79,6 +96,9 @@ const loginSchema = z.object({
 
 const app = express();
 
+// Render terminates TLS and forwards requests through one trusted proxy layer.
+// Keep the hop count explicit; do not trust arbitrary client-supplied forwarding chains.
+app.set('trust proxy', 1);
 app.disable('x-powered-by');
 app.use((req, res, next) => {
   req.requestId = randomUUID();
@@ -219,9 +239,15 @@ app.post('/api/admin/applications/:applicationId/reject', csrfProtection, requir
       { returnDocument: 'after' }
     );
     if (!application) return res.status(409).json({ error: { code: 'APPLICATION_NOT_PENDING', message: 'Application not found or already reviewed.' } });
-    await sendEmail(req.app.locals.config, { to: application.email, subject: 'BETGO application update', text: `Hello ${application.fullName},\n\nYour BETGO application for ${application.bookmaker} was not approved.\n\nReason: ${parsed.data.reason}\n\nYou may contact BETGO support if you need clarification.` });
-    await writeAudit(db, { actorUserId: req.user._id, action: 'application.reject', requestId: req.requestId, details: { applicationId: application._id.toString(), bookmaker: application.bookmaker } });
-    res.json({ message: 'Application rejected and notification email sent.' });
+    let notificationSent = true;
+    try {
+      await sendEmail(req.app.locals.config, { to: application.email, subject: 'BETGO application update', text: `Hello ${application.fullName},\n\nYour BETGO application for ${application.bookmaker} was not approved.\n\nReason: ${parsed.data.reason}\n\nYou may contact BETGO support if you need clarification.` });
+    } catch (emailError) {
+      notificationSent = false;
+      console.error(JSON.stringify({ level: 'error', event: 'application_rejection_email_failed', requestId: req.requestId, applicationId: application._id.toString(), errorName: emailError?.name || 'Error', errorCode: emailError?.code || 'EMAIL_SEND_FAILED' }));
+    }
+    await writeAudit(db, { actorUserId: req.user._id, action: 'application.reject', requestId: req.requestId, details: { applicationId: application._id.toString(), bookmaker: application.bookmaker, notificationSent } });
+    res.json({ message: notificationSent ? 'Application rejected and notification email sent.' : 'Application rejected, but the notification email could not be sent. Check the email provider configuration in Render.', notificationSent });
   } catch (error) { next(error); }
 });
 
@@ -537,7 +563,23 @@ app.post('/api/bet-instructions', csrfProtection, requireAuthLazy, async (req, r
     await policies.updateOne({ ownerUserId: req.user._id, openInstructionCount: { $exists: false } }, { $set: { openInstructionCount: 0 } });
     const saved = await policies.findOne({ ownerUserId: req.user._id });
     const policy = publicSafetyPolicy(saved);
-    if (input.stakeMinor > policy.maxStakeMinor) return res.status(409).json({ error: { code: 'STAKE_LIMIT_EXCEEDED', message: 'Stake exceeds the configured maximum per instruction.' } });
+    let verifiedOddsDecimal = input.oddsDecimal;
+    if (input.eventId) {
+      const current = await sportyBetDataClient.getMarkets(input.eventId);
+      const market = current.markets.find((item) => item.marketId === input.marketId && item.status === 'active');
+      const outcome = market?.outcomes.find((item) => item.outcomeId === input.outcomeId && item.active === true);
+      const currentOdds = Number(outcome?.odds);
+      if (!Number.isFinite(currentOdds) || currentOdds <= 1) return res.status(409).json({ error: { code: 'OUTCOME_UNAVAILABLE', message: 'This outcome is no longer active. Reload fixtures and choose another selection.' } });
+      if (Math.abs(currentOdds - input.oddsDecimal) > 0.000001) return res.status(409).json({ error: { code: 'ODDS_CHANGED', message: `Odds changed from ${input.oddsDecimal.toFixed(2)} to ${currentOdds.toFixed(2)}. Review the updated odds before creating this instruction.` } });
+      verifiedOddsDecimal = currentOdds;
+    }
+    // Apply the profit cap server-side. The entered stake is a ceiling; never increase it.
+    const effectiveStakeMinor = verifiedOddsDecimal && input.maxNetProfitMinor !== undefined
+      ? capStakeToNetProfit(input.stakeMinor, verifiedOddsDecimal, input.maxNetProfitMinor)
+      : input.stakeMinor;
+    if (effectiveStakeMinor < 100) return res.status(400).json({ error: { code: 'PROFIT_CAP_TOO_LOW', message: 'The maximum net-profit cap is too low for a minimum ₦1 stake at these odds.' } });
+    if (effectiveStakeMinor > policy.maxStakeMinor) return res.status(409).json({ error: { code: 'STAKE_LIMIT_EXCEEDED', message: 'Stake exceeds the configured maximum per instruction.' } });
+    const stakeWasAdjusted = effectiveStakeMinor < input.stakeMinor;
     const slot = await policies.findOneAndUpdate({ ownerUserId: req.user._id, openInstructionCount: { $lt: policy.maxOpenInstructions } }, { $inc: { openInstructionCount: 1 }, $set: { updatedAt: new Date() } }, { returnDocument: 'after' });
     if (!slot) return res.status(409).json({ error: { code: 'OPEN_INSTRUCTION_LIMIT', message: 'Maximum open instructions reached.' } });
     openSlotReserved = true;
@@ -546,22 +588,22 @@ app.post('/api/bet-instructions', csrfProtection, requireAuthLazy, async (req, r
     await spend.updateOne({ ownerUserId: req.user._id, day }, { $setOnInsert: { ownerUserId: req.user._id, day, reservedStakeMinor: 0, settledLossMinor: 0, accountReservedStakeMinor: {}, createdAt: new Date() } }, { upsert: true });
     const accountField = `accountReservedStakeMinor.${accountId.toString()}`;
     const reserved = await spend.findOneAndUpdate({ ownerUserId: req.user._id, day, $expr: { $and: [
-      { $lte: [{ $add: [{ $ifNull: ['$reservedStakeMinor', 0] }, input.stakeMinor] }, policy.dailyStakeLimitMinor] },
-      { $lte: [{ $add: [{ $ifNull: ['$settledLossMinor', 0] }, { $ifNull: ['$reservedStakeMinor', 0] }, input.stakeMinor] }, policy.dailyLossLimitMinor] },
-      { $lte: [{ $add: [{ $ifNull: [`$${accountField}`, 0] }, input.stakeMinor] }, policy.perAccountDailyStakeLimitMinor] }
-    ] } }, { $inc: { reservedStakeMinor: input.stakeMinor, [accountField]: input.stakeMinor }, $set: { updatedAt: new Date() } }, { returnDocument: 'after' });
+      { $lte: [{ $add: [{ $ifNull: ['$reservedStakeMinor', 0] }, effectiveStakeMinor] }, policy.dailyStakeLimitMinor] },
+      { $lte: [{ $add: [{ $ifNull: ['$settledLossMinor', 0] }, { $ifNull: ['$reservedStakeMinor', 0] }, effectiveStakeMinor] }, policy.dailyLossLimitMinor] },
+      { $lte: [{ $add: [{ $ifNull: [`$${accountField}`, 0] }, effectiveStakeMinor] }, policy.perAccountDailyStakeLimitMinor] }
+    ] } }, { $inc: { reservedStakeMinor: effectiveStakeMinor, [accountField]: effectiveStakeMinor }, $set: { updatedAt: new Date() } }, { returnDocument: 'after' });
     if (!reserved) {
       await db.collection('safetyPolicies').updateOne({ ownerUserId: req.user._id, openInstructionCount: { $gt: 0 } }, { $inc: { openInstructionCount: -1 }, $set: { updatedAt: new Date() } });
       openSlotReserved = false;
       return res.status(409).json({ error: { code: 'DAILY_LIMIT_EXCEEDED', message: 'Global stake, conservative loss-exposure or per-account daily limit would be exceeded.' } });
     }
-    reservation = { ownerUserId: req.user._id, day, accountField, stakeMinor: input.stakeMinor };
+    reservation = { ownerUserId: req.user._id, day, accountField, stakeMinor: effectiveStakeMinor };
     const now = new Date();
-    const instruction = { ownerUserId: req.user._id, accountId, accountLabel: account.displayName, platform: account.platform, eventLabel: input.eventLabel, selectionLabel: input.selectionLabel, notes: input.notes, stakeMinor: input.stakeMinor, currency: 'NGN', status: 'awaiting_approval', idempotencyKey: input.idempotencyKey, reservationDay: day, reservationActive: true, submissionEnabled: false, createdAt: now, updatedAt: now };
+    const instruction = { ownerUserId: req.user._id, accountId, accountLabel: account.displayName, platform: account.platform, eventLabel: input.eventLabel, selectionLabel: input.selectionLabel, notes: input.notes, stakeMinor: effectiveStakeMinor, oddsDecimal: verifiedOddsDecimal, eventId: input.eventId, marketId: input.marketId, outcomeId: input.outcomeId, maxNetProfitMinor: input.maxNetProfitMinor, stakeAdjusted: stakeWasAdjusted, currency: 'NGN', status: 'awaiting_approval', idempotencyKey: input.idempotencyKey, reservationDay: day, reservationActive: true, submissionEnabled: false, createdAt: now, updatedAt: now };
     const inserted = await db.collection('betInstructions').insertOne(instruction);
     reservation = null;
     openSlotReserved = false;
-    await writeAudit(db, { actorUserId: req.user._id, action: 'bet_instruction.create', requestId: req.requestId, details: { instructionId: inserted.insertedId.toString(), accountId: accountId.toString(), stakeMinor: input.stakeMinor, status: instruction.status } });
+    await writeAudit(db, { actorUserId: req.user._id, action: 'bet_instruction.create', requestId: req.requestId, details: { instructionId: inserted.insertedId.toString(), accountId: accountId.toString(), stakeMinor: effectiveStakeMinor, stakeAdjusted: stakeWasAdjusted, oddsDecimal: verifiedOddsDecimal, maxNetProfitMinor: input.maxNetProfitMinor, status: instruction.status } });
     res.status(201).json({ instruction: publicInstruction({ ...instruction, _id: inserted.insertedId }) });
   } catch (error) {
     if (reservation) await req.app.locals.db.collection('dailySpend').updateOne({ ownerUserId: reservation.ownerUserId, day: reservation.day }, { $inc: { reservedStakeMinor: -reservation.stakeMinor, [reservation.accountField]: -reservation.stakeMinor }, $set: { updatedAt: new Date() } }).catch(() => {});
@@ -625,7 +667,7 @@ app.post('/api/admin/recover-reservations', csrfProtection, requireAuthLazy, req
 });
 
 function publicInstruction(instruction) {
-  return { id: instruction._id.toString(), accountId: instruction.accountId.toString(), accountLabel: instruction.accountLabel, platform: instruction.platform, eventLabel: instruction.eventLabel, selectionLabel: instruction.selectionLabel, notes: instruction.notes || '', stakeMinor: instruction.stakeMinor, currency: instruction.currency, status: instruction.status, reservationReleaseState: instruction.reservationReleaseState || (instruction.reservationActive ? 'active' : 'not_applicable'), submissionEnabled: false, createdAt: instruction.createdAt, updatedAt: instruction.updatedAt };
+  return { id: instruction._id.toString(), accountId: instruction.accountId.toString(), accountLabel: instruction.accountLabel, platform: instruction.platform, eventLabel: instruction.eventLabel, selectionLabel: instruction.selectionLabel, notes: instruction.notes || '', stakeMinor: instruction.stakeMinor, oddsDecimal: instruction.oddsDecimal, eventId: instruction.eventId, marketId: instruction.marketId, outcomeId: instruction.outcomeId, maxNetProfitMinor: instruction.maxNetProfitMinor, stakeAdjusted: instruction.stakeAdjusted === true, currency: instruction.currency, status: instruction.status, reservationReleaseState: instruction.reservationReleaseState || (instruction.reservationActive ? 'active' : 'not_applicable'), submissionEnabled: false, createdAt: instruction.createdAt, updatedAt: instruction.updatedAt };
 }
 
 app.get('/api/integrations', requireAuthLazy, (_req, res) => {
@@ -666,6 +708,8 @@ app.use((error, req, res, _next) => {
     level: 'error',
     requestId: req.requestId,
     errorName: error?.name || 'Error',
+    errorCode: error?.code || undefined,
+    errorStatus: Number.isInteger(error?.status) ? error.status : undefined,
     message: req.app.locals.config?.nodeEnv === 'production' ? 'Request failed' : String(error?.message || error)
   }));
   if (res.headersSent) return;
