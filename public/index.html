@@ -37,10 +37,22 @@
         <p id="login-error" class="form-error" role="alert" hidden></p>
         <button type="submit" id="login-button">Sign in <span aria-hidden="true">→</span></button>
       </form>
-      <p class="muted small">Registration is private and disabled. An owner account must be provisioned on the server.</p>
+      <p class="muted small">Existing members sign in here. New users must apply and wait for admin review.</p>
+      <div class="application-box">
+        <div class="panel-heading"><div><p class="eyebrow">NEW MEMBER</p><h3>Apply for access</h3></div></div>
+        <form id="application-form" class="account-form">
+          <label for="application-name">Full name</label><input id="application-name" required maxlength="100" autocomplete="name" placeholder="Your full name">
+          <label for="application-email">Email address</label><input id="application-email" type="email" required maxlength="254" autocomplete="email" placeholder="you@example.com">
+          <label for="application-bookmaker">Bookmaker bot</label><select id="application-bookmaker" required><option value="SportyBet">SportyBet — ₦5,000 / 30 days</option><option value="Football.com Nigeria">Football.com Nigeria — ₦5,000 / 30 days</option><option value="BetWinner">BetWinner — ₦6,000 / 30 days</option><option value="Sokabet">Sokabet — ₦5,000 / 30 days</option><option value="MSport">MSport — ₦6,000 / 30 days</option></select>
+          <button id="application-button" type="submit">Submit application</button>
+        </form><p id="application-message" role="status" hidden></p>
+        <p class="muted small">Submitting an application does not create an account or charge you. Prices are configurable by the operator.</p>
+      </div>
     </section>
     <section id="dashboard" hidden>
       <div class="welcome-row"><div><p class="eyebrow">OVERVIEW</p><h2>Workspace overview</h2><p id="welcome"></p></div><button id="logout-button" class="button-secondary">Log out</button></div>
+      <section id="password-change-panel" class="panel dashboard-section" hidden><div class="panel-heading"><div><p class="eyebrow">ACCOUNT SECURITY</p><h2>Change temporary password</h2></div></div><form id="password-change-form" class="account-form"><label for="temporary-password">Temporary password</label><input id="temporary-password" type="password" required autocomplete="current-password"><label for="new-password">New password (at least 12 characters)</label><input id="new-password" type="password" minlength="12" required autocomplete="new-password"><button type="submit">Change password</button></form><p id="password-change-message" role="status" hidden></p></section>
+      <section id="admin-applications-section" class="panel dashboard-section" hidden><div class="panel-heading"><div><p class="eyebrow">MEMBERSHIP ADMIN</p><h2>Applications</h2></div><button id="refresh-applications" class="button-secondary" type="button">Refresh</button></div><p class="muted small">Approval initializes a Flutterwave payment and sends the link. Rejection requires a reason. Email and payment credentials must be configured in Render.</p><p id="applications-message" role="status" hidden></p><div id="applications-list" class="account-list"></div></section>
       <nav class="section-nav" aria-label="Dashboard sections">
         <a href="#accounts-section">Accounts</a><a href="#limits-section">Safety limits</a><a href="#instructions-section">Instructions</a><a href="#integrations-section">Integrations</a>
       </nav>

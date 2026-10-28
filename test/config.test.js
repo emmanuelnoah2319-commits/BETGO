@@ -16,6 +16,8 @@ test('loads valid config and leaves betting integration disabled', () => {
   const config = loadConfig(base);
   assert.equal(config.port, 3000);
   assert.equal(config.bookmakerIntegrationsEnabled, false);
+  assert.equal(config.flutterwaveSecretKey, '');
+  assert.equal(config.flutterwaveSecretHash, '');
 });
 
 test('rejects a short session secret', () => {
@@ -28,4 +30,10 @@ test('requires secure cookies in production', () => {
 
 test('requires bootstrap email and password together', () => {
   assert.throws(() => loadConfig({ ...base, BOOTSTRAP_OWNER_EMAIL: 'owner@example.com' }), /must be provided together/);
+});
+
+test('provides per-bookmaker prices and a 30-day membership default', () => {
+  const config = loadConfig(base);
+  assert.equal(config.bookmakerPricesNgn.SportyBet, 5000);
+  assert.equal(config.bookmakerPricesNgn.BetWinner, 6000);
 });

@@ -16,7 +16,17 @@ const schema = z.object({
   BOOKMAKER_INTEGRATIONS_ENABLED: z.enum(['true', 'false']).default('false'),
   FCM_PROJECT_ID: z.string().optional().or(z.literal('')),
   FCM_CLIENT_EMAIL: z.string().optional().or(z.literal('')),
-  FCM_PRIVATE_KEY: z.string().optional().or(z.literal(''))
+  FCM_PRIVATE_KEY: z.string().optional().or(z.literal('')),
+  RESEND_API_KEY: z.string().optional().or(z.literal('')),
+  EMAIL_FROM: z.string().optional().or(z.literal('')),
+  FLW_SECRET_KEY: z.string().optional().or(z.literal('')),
+  FLW_SECRET_HASH: z.string().optional().or(z.literal('')),
+  FLW_CALLBACK_URL: z.string().url().optional().or(z.literal('')),
+  PRICE_SPORTYBET_NGN: z.coerce.number().positive().default(5000),
+  PRICE_FOOTBALL_COM_NGN: z.coerce.number().positive().default(5000),
+  PRICE_BETWINNER_NGN: z.coerce.number().positive().default(6000),
+  PRICE_SOKABET_NGN: z.coerce.number().positive().default(5000),
+  PRICE_MSPORT_NGN: z.coerce.number().positive().default(6000)
 });
 
 export function loadConfig(source = process.env) {
@@ -50,6 +60,18 @@ export function loadConfig(source = process.env) {
     bookmakerIntegrationsEnabled: env.BOOKMAKER_INTEGRATIONS_ENABLED === 'true',
     fcmProjectId: env.FCM_PROJECT_ID || '',
     fcmClientEmail: env.FCM_CLIENT_EMAIL || '',
-    fcmPrivateKey: env.FCM_PRIVATE_KEY || ''
+    fcmPrivateKey: env.FCM_PRIVATE_KEY || '',
+    resendApiKey: env.RESEND_API_KEY || '',
+    emailFrom: env.EMAIL_FROM || '',
+    flutterwaveSecretKey: env.FLW_SECRET_KEY || '',
+    flutterwaveSecretHash: env.FLW_SECRET_HASH || '',
+    flutterwaveCallbackUrl: env.FLW_CALLBACK_URL || `${env.APP_ORIGIN}/payment/return`,
+    bookmakerPricesNgn: Object.freeze({
+      'SportyBet': env.PRICE_SPORTYBET_NGN,
+      'Football.com Nigeria': env.PRICE_FOOTBALL_COM_NGN,
+      'BetWinner': env.PRICE_BETWINNER_NGN,
+      'Sokabet': env.PRICE_SOKABET_NGN,
+      'MSport': env.PRICE_MSPORT_NGN
+    })
   });
 }

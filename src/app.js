@@ -2,7 +2,8 @@ import express from 'express';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual, randomBytes } from 'node:crypto';
+import argon2 from 'argon2';
 import { z } from 'zod';
 import { ObjectId } from 'mongodb';
 import { createCsrfToken, csrfProtection } from './security/csrf.js';
@@ -14,6 +15,8 @@ import { sportyBetDataClient } from './integrations/sportybet-data.js';
 import { CANCELLABLE_INSTRUCTION_STATUSES, transitionInstructionStatus } from './services/instruction-lifecycle.js';
 import { recoverPendingReservationReleases, releaseInstructionReservation } from './services/instruction-reservations.js';
 import { getOperationalControl, setEmergencyStop } from './services/operational-control.js';
+import { sendEmail } from './services/notifications.js';
+import { initializeFlutterwavePayment, verifyFlutterwavePayment } from './services/payments.js';
 
 const supportedPlatforms = ['SportyBet', 'Football.com Nigeria', 'BetWinner', 'Sokabet', 'MSport'];
 const accountCreateSchema = z.object({
@@ -62,6 +65,13 @@ const DEFAULT_SAFETY_POLICY = Object.freeze({
 });
 
 
+const applicationSchema = z.object({
+  email: z.string().trim().email().max(254),
+  bookmaker: z.enum(supportedPlatforms),
+  fullName: z.string().trim().min(2).max(100)
+}).strict();
+const reviewSchema = z.object({ reason: z.string().trim().min(3).max(500).optional() }).strict();
+
 const loginSchema = z.object({
   email: z.string().email().max(254),
   password: z.string().min(1).max(1024)
@@ -90,6 +100,7 @@ app.use(helmet({
   },
   crossOriginEmbedderPolicy: false
 }));
+app.use('/api/payments/flutterwave/webhook', express.raw({ type: 'application/json', limit: '64kb' }));
 app.use(express.json({ limit: '32kb', strict: true }));
 app.use(cookieParser());
 app.use(express.static(new URL('../public', import.meta.url).pathname, { index: 'index.html', fallthrough: true }));
@@ -161,9 +172,149 @@ function requireAuthLazy(req, res, next) {
   return requireAuth(req.app.locals.db)(req, res, next);
 }
 
+app.get('/api/plans', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ plans: Object.entries(req.app.locals.config.bookmakerPricesNgn).map(([bookmaker, priceNgn]) => ({ bookmaker, priceNgn, durationDays: 30 })) });
+});
+
+app.post('/api/applications', authLimiter, csrfProtection, async (req, res, next) => {
+  try {
+    const parsed = applicationSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Provide your name, a valid email and one bookmaker.' } });
+    const db = req.app.locals.db;
+    const email = parsed.data.email.trim();
+    const emailNormalized = email.toLowerCase();
+    const existingUser = await db.collection('users').findOne({ emailNormalized });
+    if (existingUser) return res.status(409).json({ error: { code: 'ACCOUNT_EXISTS', message: 'An account already exists for this email.' } });
+    const pending = await db.collection('applications').findOne({ emailNormalized, status: { $in: ['pending', 'approved_awaiting_payment'] } });
+    if (pending) return res.status(409).json({ error: { code: 'APPLICATION_EXISTS', message: 'An application for this email is already being processed.' } });
+    const now = new Date();
+    const application = {
+      fullName: parsed.data.fullName.trim(), email, emailNormalized, bookmaker: parsed.data.bookmaker,
+      priceNgn: req.app.locals.config.bookmakerPricesNgn[parsed.data.bookmaker], status: 'pending',
+      createdAt: now, updatedAt: now, reviewedAt: null, reviewedByUserId: null, rejectionReason: null
+    };
+    const result = await db.collection('applications').insertOne(application);
+    await writeAudit(db, { action: 'application.submit', requestId: req.requestId, details: { applicationId: result.insertedId.toString(), bookmaker: application.bookmaker } });
+    res.status(201).json({ message: 'Application received. BETGO will email you after review.', application: { id: result.insertedId.toString(), status: application.status } });
+  } catch (error) { next(error); }
+});
+
+app.get('/api/admin/applications', requireAuthLazy, requireOwner, async (req, res) => {
+  const applications = await req.app.locals.db.collection('applications').find({}).sort({ createdAt: -1 }).limit(200).toArray();
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ applications: applications.map((item) => ({ id: item._id.toString(), fullName: item.fullName, email: item.email, bookmaker: item.bookmaker, priceNgn: item.priceNgn, status: item.status, createdAt: item.createdAt, rejectionReason: item.rejectionReason || null })) });
+});
+
+app.post('/api/admin/applications/:applicationId/reject', csrfProtection, requireAuthLazy, requireOwner, async (req, res, next) => {
+  try {
+    if (!ObjectId.isValid(req.params.applicationId)) return res.status(400).json({ error: { code: 'INVALID_APPLICATION_ID', message: 'Application ID is invalid.' } });
+    const parsed = reviewSchema.safeParse(req.body);
+    if (!parsed.success || !parsed.data.reason) return res.status(400).json({ error: { code: 'REJECTION_REASON_REQUIRED', message: 'A clear rejection reason is required.' } });
+    if (!req.app.locals.config.resendApiKey || !req.app.locals.config.emailFrom) return res.status(503).json({ error: { code: 'EMAIL_NOT_CONFIGURED', message: 'Customer email is not configured. Application was not changed.' } });
+    const db = req.app.locals.db;
+    const application = await db.collection('applications').findOneAndUpdate(
+      { _id: new ObjectId(req.params.applicationId), status: 'pending' },
+      { $set: { status: 'rejected', rejectionReason: parsed.data.reason, reviewedAt: new Date(), reviewedByUserId: req.user._id, updatedAt: new Date() } },
+      { returnDocument: 'after' }
+    );
+    if (!application) return res.status(409).json({ error: { code: 'APPLICATION_NOT_PENDING', message: 'Application not found or already reviewed.' } });
+    await sendEmail(req.app.locals.config, { to: application.email, subject: 'BETGO application update', text: `Hello ${application.fullName},\n\nYour BETGO application for ${application.bookmaker} was not approved.\n\nReason: ${parsed.data.reason}\n\nYou may contact BETGO support if you need clarification.` });
+    await writeAudit(db, { actorUserId: req.user._id, action: 'application.reject', requestId: req.requestId, details: { applicationId: application._id.toString(), bookmaker: application.bookmaker } });
+    res.json({ message: 'Application rejected and notification email sent.' });
+  } catch (error) { next(error); }
+});
+
+app.post('/api/admin/applications/:applicationId/approve', csrfProtection, requireAuthLazy, requireOwner, async (req, res, next) => {
+  try {
+    if (!ObjectId.isValid(req.params.applicationId)) return res.status(400).json({ error: { code: 'INVALID_APPLICATION_ID', message: 'Application ID is invalid.' } });
+    if (!req.app.locals.config.resendApiKey || !req.app.locals.config.emailFrom) return res.status(503).json({ error: { code: 'EMAIL_NOT_CONFIGURED', message: 'Customer email is not configured. Application was not changed.' } });
+    if (!req.app.locals.config.flutterwaveSecretKey) return res.status(503).json({ error: { code: 'PAYMENTS_NOT_CONFIGURED', message: 'Flutterwave is not configured. Application was not changed.' } });
+    const db = req.app.locals.db;
+    const application = await db.collection('applications').findOne({ _id: new ObjectId(req.params.applicationId), status: 'pending' });
+    if (!application) return res.status(409).json({ error: { code: 'APPLICATION_NOT_PENDING', message: 'Application not found or already reviewed.' } });
+    const reference = `betgo_${application._id.toString()}_${randomUUID().replaceAll('-', '')}`;
+    const payment = await initializeFlutterwavePayment(req.app.locals.config, {
+      email: application.email, fullName: application.fullName, amountNgn: application.priceNgn, reference,
+      callbackUrl: req.app.locals.config.flutterwaveCallbackUrl,
+      metadata: { applicationId: application._id.toString(), bookmaker: application.bookmaker, subscriptionDays: 30 }
+    });
+    const now = new Date();
+    const updated = await db.collection('applications').findOneAndUpdate(
+      { _id: application._id, status: 'pending' },
+      { $set: { status: 'approved_awaiting_payment', reviewedAt: now, reviewedByUserId: req.user._id, paymentReference: reference, paymentUrl: payment.link, updatedAt: now } },
+      { returnDocument: 'after' }
+    );
+    if (!updated) return res.status(409).json({ error: { code: 'APPLICATION_NOT_PENDING', message: 'Application was reviewed concurrently.' } });
+    await db.collection('payments').insertOne({ applicationId: application._id, reference, amountNgn: application.priceNgn, status: 'pending', provider: 'flutterwave', createdAt: now, updatedAt: now });
+    await sendEmail(req.app.locals.config, { to: application.email, subject: 'Your BETGO application is approved', text: `Hello ${application.fullName},\n\nYour application for ${application.bookmaker} has been approved.\n\nSubscription price: NGN ${application.priceNgn.toLocaleString('en-NG')} for 30 days.\nComplete payment securely using this Flutterwave link: ${payment.link}\n\nYour 30-day subscription starts only after Flutterwave confirms successful payment. Do not share your payment details with anyone.` });
+    await writeAudit(db, { actorUserId: req.user._id, action: 'application.approve', requestId: req.requestId, details: { applicationId: application._id.toString(), bookmaker: application.bookmaker, amountNgn: application.priceNgn } });
+    res.json({ message: 'Application approved; payment link created and email sent.', paymentUrl: payment.link });
+  } catch (error) { next(error); }
+});
+
+app.post('/api/payments/flutterwave/webhook', async (req, res, next) => {
+  try {
+    const secret = req.app.locals.config.flutterwaveSecretHash;
+    const signature = req.get('verif-hash') || '';
+    if (!secret || !signature || !Buffer.isBuffer(req.body)) return res.status(401).json({ error: { code: 'INVALID_WEBHOOK', message: 'Webhook signature is required.' } });
+    const expected = secret;
+    const suppliedBuffer = Buffer.from(signature); const expectedBuffer = Buffer.from(expected);
+    if (suppliedBuffer.length !== expectedBuffer.length || !timingSafeEqual(suppliedBuffer, expectedBuffer)) return res.status(401).json({ error: { code: 'INVALID_WEBHOOK', message: 'Webhook signature is invalid.' } });
+    const event = JSON.parse(req.body.toString('utf8'));
+    if (event.event !== 'charge.completed' || event.data?.status !== 'successful' || !event.data?.id || !event.data?.tx_ref) return res.status(200).json({ received: true });
+    const verified = await verifyFlutterwavePayment(req.app.locals.config, event.data.id);
+    if (!verified) return res.status(200).json({ received: true, verified: false });
+    const db = req.app.locals.db;
+    const payment = await db.collection('payments').findOne({ reference: verified.tx_ref });
+    if (!payment) return res.status(200).json({ received: true, alreadyProcessed: true });
+    const application = await db.collection('applications').findOne({ _id: payment.applicationId });
+    if (!application || Number(verified.amount) !== Number(payment.amountNgn) || verified.currency !== 'NGN' || verified.customer?.email?.trim().toLowerCase() !== application.emailNormalized) return res.status(200).json({ received: true, verified: false });
+    const emailNormalized = application.emailNormalized;
+    let user = await db.collection('users').findOne({ emailNormalized });
+    let now = new Date();
+    let subscriptionExpiresAt;
+    if (payment.status === 'paid') {
+      if (!user || user.mustChangePassword !== true) return res.status(200).json({ received: true, alreadyProcessed: true });
+      // Retry delivery after a transient email-provider failure without extending the paid subscription.
+      const temporaryPassword = randomBytes(18).toString('base64url');
+      await db.collection('users').updateOne({ _id: user._id, mustChangePassword: true }, { $set: { passwordHash: await argon2.hash(temporaryPassword, { type: argon2.argon2id }), temporaryPasswordIssuedAt: now } });
+      subscriptionExpiresAt = user.subscriptionExpiresAt;
+      await sendEmail(req.app.locals.config, { to: application.email, subject: 'BETGO temporary login details', text: `Hello ${application.fullName},\n\nUsername: ${application.email}\nTemporary password: ${temporaryPassword}\nSubscription expires: ${new Date(subscriptionExpiresAt).toISOString()}\n\nSign in at ${req.app.locals.config.appOrigin} and change this temporary password immediately.` });
+      return res.status(200).json({ received: true, credentialEmailRetried: true });
+    }
+    if (payment.status !== 'pending' || application.status !== 'approved_awaiting_payment') return res.status(200).json({ received: true, alreadyProcessed: true });
+    if (user) return res.status(200).json({ received: true, accountExists: true });
+    const temporaryPassword = randomBytes(18).toString('base64url');
+    subscriptionExpiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const passwordHash = await argon2.hash(temporaryPassword, { type: argon2.argon2id });
+    const userResult = await db.collection('users').insertOne({ email: application.email, emailNormalized, fullName: application.fullName, passwordHash, role: 'member', bookmaker: application.bookmaker, createdAt: now, disabledAt: null, authVersion: 1, subscriptionStartedAt: now, subscriptionExpiresAt, mustChangePassword: true, temporaryPasswordIssuedAt: now, applicationId: application._id });
+    await db.collection('payments').updateOne({ _id: payment._id, status: 'pending' }, { $set: { status: 'paid', paidAt: now, flutterwaveTransactionId: verified.id, updatedAt: now, userId: userResult.insertedId } });
+    await db.collection('applications').updateOne({ _id: application._id, status: 'approved_awaiting_payment' }, { $set: { status: 'active', paidAt: now, subscriptionExpiresAt, userId: userResult.insertedId, updatedAt: now } });
+    await sendEmail(req.app.locals.config, { to: application.email, subject: 'BETGO payment confirmed — temporary login', text: `Hello ${application.fullName},\n\nYour payment of NGN ${payment.amountNgn.toLocaleString('en-NG')} is confirmed. Your ${application.bookmaker} subscription is active until ${subscriptionExpiresAt.toISOString()}.\n\nUsername: ${application.email}\nTemporary password: ${temporaryPassword}\n\nSign in at ${req.app.locals.config.appOrigin}. Change this temporary password immediately and do not share it. Your subscription expires 30 days after payment confirmation.` });
+    await writeAudit(db, { action: 'payment.activate_subscription', requestId: req.requestId, details: { applicationId: application._id.toString(), userId: userResult.insertedId.toString(), amountNgn: payment.amountNgn } });
+    res.json({ received: true, activated: true });
+  } catch (error) { next(error); }
+});
+
+app.post('/api/me/password', csrfProtection, requireAuthLazy, async (req, res, next) => {
+  try {
+    const parsed = z.object({ currentPassword: z.string().min(1).max(1024), newPassword: z.string().min(12).max(1024) }).strict().safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Provide your temporary password and a new password of at least 12 characters.' } });
+    const db = req.app.locals.db;
+    const user = await db.collection('users').findOne({ _id: req.user._id });
+    if (!user || !(await argon2.verify(user.passwordHash, parsed.data.currentPassword).catch(() => false))) return res.status(401).json({ error: { code: 'INVALID_PASSWORD', message: 'Current password is incorrect.' } });
+    await db.collection('users').updateOne({ _id: user._id }, { $set: { passwordHash: await argon2.hash(parsed.data.newPassword, { type: argon2.argon2id }), mustChangePassword: false, passwordChangedAt: new Date() }, $inc: { authVersion: 1 } });
+    await db.collection('sessions').updateMany({ userId: user._id, revokedAt: null }, { $set: { revokedAt: new Date() } });
+    res.clearCookie(req.app.locals.config.cookieName, { httpOnly: true, secure: req.app.locals.config.cookieSecure, sameSite: 'strict', path: '/' });
+    await writeAudit(db, { actorUserId: user._id, action: 'auth.password_change', requestId: req.requestId });
+    res.json({ message: 'Password changed. Sign in again.' });
+  } catch (error) { next(error); }
+});
+
 app.get('/api/me', requireAuthLazy, (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
-  res.json({ user: { id: req.user._id.toString(), email: req.user.email, role: req.user.role } });
+  res.json({ user: { id: req.user._id.toString(), email: req.user.email, role: req.user.role, mustChangePassword: req.user.mustChangePassword === true, subscriptionExpiresAt: req.user.subscriptionExpiresAt || null } });
 });
 
 app.get('/api/admin/operations', requireAuthLazy, requireOwner, async (req, res) => {

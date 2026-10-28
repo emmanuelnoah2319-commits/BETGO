@@ -121,7 +121,10 @@ async function loadDashboard() {
   try {
     const { user } = await request('/api/me'); $('#welcome').textContent = `Signed in as ${user.email}`;
     $('#login-panel').hidden = true; $('#dashboard').hidden = false; $('#dashboard-error').hidden = true;
-    await Promise.all([loadAccounts(), loadIntegrations(), loadSafetyPolicy(), loadInstructions()]);
+    $('#admin-applications-section').hidden = user.role !== 'owner';
+    $('#password-change-panel').hidden = !user.mustChangePassword;
+    if (user.mustChangePassword) return;
+    await Promise.all([loadAccounts(), loadIntegrations(), loadSafetyPolicy(), loadInstructions(), ...(user.role === 'owner' ? [loadApplications()] : [])]);
   } catch (error) {
     if (error.message === 'Login required' || error.message.includes('Session')) return showLogin();
     $('#dashboard-error').hidden = false; $('#dashboard-error').textContent = error.message;
@@ -129,7 +132,9 @@ async function loadDashboard() {
 }
 $('#login-form').addEventListener('submit', async (event) => {
   event.preventDefault(); const button = $('#login-button'); button.disabled = true; button.textContent = 'Signing in…'; $('#login-error').hidden = true;
-  try { await mutate('/api/auth/login', 'POST', { email: $('#email').value, password: $('#password').value }); $('#password').value = ''; await loadDashboard(); }
+  try { await mutate('/api/auth/login', 'POST', { email: $('#email').value, password: $('#password').value }); $('#password').value = ''; await async function loadPlans() { try { const { plans } = await request('/api/plans'); const select = $('#application-bookmaker'); for (const option of select.options) { const plan = plans.find((item) => item.bookmaker === option.value); if (plan) option.textContent = `${plan.bookmaker} — ₦${Number(plan.priceNgn).toLocaleString('en-NG')} / ${plan.durationDays} days`; } } catch { /* Keep the visible defaults if the plans endpoint is temporarily unavailable. */ } }
+loadPlans();
+loadDashboard(); }
   catch (error) { showLogin(error.message); }
   finally { button.disabled = false; button.innerHTML = 'Sign in <span aria-hidden="true">→</span>'; }
 });
@@ -193,6 +198,23 @@ $('#load-sportybet-fixtures').addEventListener('click', async () => {
   } finally { button.disabled = false; button.textContent = 'Load live fixtures'; }
 });
 
+$('#application-form').addEventListener('submit', async (event) => {
+  event.preventDefault(); const button = $('#application-button'); button.disabled = true; button.textContent = 'Submitting…'; showMessage('application-message');
+  try { const result = await mutate('/api/applications', 'POST', { fullName: $('#application-name').value.trim(), email: $('#application-email').value.trim(), bookmaker: $('#application-bookmaker').value }); $('#application-form').reset(); showMessage('application-message', result.message); }
+  catch (error) { showMessage('application-message', error.message, true); }
+  finally { button.disabled = false; button.textContent = 'Submit application'; }
+});
+async function loadApplications() {
+  const { applications } = await request('/api/admin/applications'); const list = $('#applications-list'); list.replaceChildren();
+  if (!applications.length) { list.append(element('p', 'empty-state', 'No applications yet.')); return; }
+  for (const item of applications) { const card = element('article', 'account-card'); card.append(element('strong', '', item.fullName), element('p', '', item.email), element('p', 'fixture-meta', `${item.bookmaker} · ₦${Number(item.priceNgn).toLocaleString('en-NG')} / 30 days · ${item.status}`));
+    if (item.status === 'pending') { const actions = element('div', 'account-actions'); const approve = element('button', '', 'Approve & send payment link'); approve.type = 'button'; approve.addEventListener('click', async () => { approve.disabled = true; try { const result = await mutate(`/api/admin/applications/${encodeURIComponent(item.id)}/approve`, 'POST', {}); showMessage('applications-message', result.message); await loadApplications(); } catch (error) { showMessage('applications-message', error.message, true); approve.disabled = false; } }); const reject = element('button', 'button-secondary', 'Reject'); reject.type = 'button'; reject.addEventListener('click', async () => { const reason = window.prompt('Enter the reason for rejecting this application:'); if (!reason || reason.trim().length < 3) return; reject.disabled = true; try { const result = await mutate(`/api/admin/applications/${encodeURIComponent(item.id)}/reject`, 'POST', { reason: reason.trim() }); showMessage('applications-message', result.message); await loadApplications(); } catch (error) { showMessage('applications-message', error.message, true); reject.disabled = false; } }); actions.append(approve, reject); card.append(actions); }
+    list.append(card);
+  }
+}
+$('#refresh-applications').addEventListener('click', async () => { try { await loadApplications(); showMessage('applications-message', 'Applications refreshed.'); } catch (error) { showMessage('applications-message', error.message, true); } });
+$('#password-change-form').addEventListener('submit', async (event) => { event.preventDefault(); try { const result = await mutate('/api/me/password', 'POST', { currentPassword: $('#temporary-password').value, newPassword: $('#new-password').value }); showMessage('password-change-message', result.message); await mutate('/api/auth/logout', 'POST'); showLogin('Password changed. Sign in with your new password.'); } catch (error) { showMessage('password-change-message', error.message, true); } });
+
 $('#logout-button').addEventListener('click', async () => {
   try { await mutate('/api/auth/logout', 'POST'); showLogin(); }
   catch (error) { $('#dashboard-error').hidden = false; $('#dashboard-error').textContent = error.message; }
@@ -209,4 +231,6 @@ $('#instruction-form').addEventListener('submit', async (event) => {
   catch (error) { showMessage('instruction-message', error.message, true); }
   finally { button.disabled = false; button.textContent = 'Create review instruction'; }
 });
+async function loadPlans() { try { const { plans } = await request('/api/plans'); const select = $('#application-bookmaker'); for (const option of select.options) { const plan = plans.find((item) => item.bookmaker === option.value); if (plan) option.textContent = `${plan.bookmaker} — ₦${Number(plan.priceNgn).toLocaleString('en-NG')} / ${plan.durationDays} days`; } } catch { /* Keep the visible defaults if the plans endpoint is temporarily unavailable. */ } }
+loadPlans();
 loadDashboard();

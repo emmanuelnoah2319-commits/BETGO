@@ -14,6 +14,10 @@ export async function connectMongo(config) {
 export async function ensureIndexes(db) {
   await Promise.all([
     db.collection('users').createIndex({ emailNormalized: 1 }, { unique: true }),
+    db.collection('applications').createIndex({ emailNormalized: 1, status: 1 }),
+    db.collection('applications').createIndex({ createdAt: -1 }),
+    db.collection('payments').createIndex({ reference: 1 }, { unique: true }),
+    db.collection('payments').createIndex({ applicationId: 1, createdAt: -1 }),
     db.collection('sessions').createIndex({ tokenHash: 1 }, { unique: true }),
     db.collection('sessions').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
     db.collection('auditEvents').createIndex({ createdAt: -1 }),

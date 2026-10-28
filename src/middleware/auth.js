@@ -16,6 +16,8 @@ export function requireAuth(db) {
         { projection: { passwordHash: 0 } }
       );
       if (!user) return res.status(401).json({ error: { code: 'USER_UNAVAILABLE', message: 'User unavailable' } });
+      if (user.role !== 'owner' && user.subscriptionExpiresAt && new Date(user.subscriptionExpiresAt) <= new Date()) return res.status(403).json({ error: { code: 'SUBSCRIPTION_EXPIRED', message: 'Your 30-day subscription has expired.' } });
+      if (user.mustChangePassword === true && req.path !== '/api/me/password' && req.path !== '/api/me') return res.status(403).json({ error: { code: 'PASSWORD_CHANGE_REQUIRED', message: 'Change your temporary password before using BETGO.' } });
       req.user = user;
       req.sessionId = session._id;
       next();

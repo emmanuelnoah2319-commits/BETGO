@@ -29,7 +29,8 @@ export async function login(db, config, { email, password, requestId }) {
   const passwordMatches = user
     ? await argon2.verify(user.passwordHash, password).catch(() => false)
     : false;
-  if (!user || !passwordMatches) {
+  const subscriptionExpired = user?.role !== 'owner' && user?.subscriptionExpiresAt && new Date(user.subscriptionExpiresAt) <= new Date();
+  if (!user || !passwordMatches || subscriptionExpired) {
     await writeAudit(db, { action: 'auth.login', outcome: 'rejected', requestId, details: { reason: 'invalid_credentials' } });
     return null;
   }
@@ -45,7 +46,7 @@ export async function login(db, config, { email, password, requestId }) {
     authVersion: user.authVersion
   });
   await writeAudit(db, { actorUserId: user._id, action: 'auth.login', requestId });
-  return { token: rawToken, expiresAt, sessionId: result.insertedId, user: { id: user._id.toString(), email: user.email, role: user.role } };
+  return { token: rawToken, expiresAt, sessionId: result.insertedId, user: { id: user._id.toString(), email: user.email, role: user.role, mustChangePassword: user.mustChangePassword === true, subscriptionExpiresAt: user.subscriptionExpiresAt || null } };
 }
 
 export async function revokeSession(db, sessionId, actorUserId, requestId) {
