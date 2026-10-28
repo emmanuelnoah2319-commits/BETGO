@@ -1,0 +1,144 @@
+
+name: Apply BETGO ZIP
+
+on:
+  workflow_dispatch:
+    inputs:
+      archive:
+        description: "ZIP filename in repository root"
+        required: true
+        default: "BETGO-phase4-sportybet-odds-to-instruction.zip"
+        type: string
+      commit_message:
+        description: "Commit message"
+        required: true
+        default: "Apply BETGO SportyBet odds-to-instruction update"
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-betgo-zip-main
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: true
+
+      - name: Validate and apply ZIP
+        env:
+          ARCHIVE: ${{ inputs.archive }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import shutil
+          import stat
+          import zipfile
+          from pathlib import Path, PurePosixPath
+
+          repo = Path.cwd().resolve()
+          name = os.environ["ARCHIVE"]
+
+          if Path(name).name != name or not name.lower().endswith(".zip"):
+              raise SystemExit("Provide a ZIP filename in the repository root.")
+
+          archive = repo / name
+          if not archive.is_file():
+              raise SystemExit(f"ZIP not found: {name}")
+
+          with zipfile.ZipFile(archive) as zf:
+              members = zf.infolist()
+              files = [m for m in members if not m.is_dir()]
+              prefixes = {
+                  PurePosixPath(m.filename).parts[0]
+                  for m in files if PurePosixPath(m.filename).parts
+              }
+              wrapper = prefixes == {"betgo"}
+
+              extracted = Path(os.environ["RUNNER_TEMP"]) / "betgo-zip"
+              if extracted.exists():
+                  shutil.rmtree(extracted)
+              extracted.mkdir(parents=True)
+
+              for info in members:
+                  path = PurePosixPath(info.filename)
+                  if path.is_absolute() or ".." in path.parts:
+                      raise SystemExit(f"Unsafe ZIP path: {info.filename}")
+
+                  if stat.S_ISLNK(info.external_attr >> 16):
+                      raise SystemExit("ZIP symlinks are not allowed.")
+
+                  parts = path.parts
+                  if wrapper:
+                      if not parts or parts[0] != "betgo":
+                          continue
+                      parts = parts[1:]
+
+                  if not parts or parts[0] in {
+                      ".git", ".github", "node_modules"
+                  }:
+                      continue
+
+                  if any(
+                      p == ".env" or (
+                          p.startswith(".env.") and p != ".env.example"
+                      )
+                      for p in parts
+                  ):
+                      continue
+
+                  target = (extracted / Path(*parts)).resolve()
+                  if extracted.resolve() not in target.parents:
+                      raise SystemExit("Unsafe extraction target.")
+
+                  if info.is_dir():
+                      target.mkdir(parents=True, exist_ok=True)
+                  else:
+                      target.parent.mkdir(parents=True, exist_ok=True)
+                      with zf.open(info) as src, target.open("wb") as dst:
+                          shutil.copyfileobj(src, dst)
+
+          if not (extracted / "package.json").is_file():
+              raise SystemExit("ZIP must contain package.json.")
+
+          for source in extracted.rglob("*"):
+              relative = source.relative_to(extracted)
+              destination = repo / relative
+
+              if source.is_dir():
+                  destination.mkdir(parents=True, exist_ok=True)
+              else:
+                  destination.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copy2(source, destination)
+
+          print(f"Applied files from {name}.")
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run checks
+        run: npm run check
+
+      - name: Run tests
+        run: npm test
+
+      - name: Commit and push
+        env:
+          COMMIT_MESSAGE: ${{ inputs.commit_message }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "$COMMIT_MESSAGE"
+          git push origin HEAD:main
