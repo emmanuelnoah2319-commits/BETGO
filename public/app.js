@@ -51,12 +51,35 @@ function element(tag, className, text) {
 function renderAccount(account) {
   const card = element('article', 'account-card'); const top = element('div', 'account-card-top'); const identity = element('div');
   identity.append(element('strong', '', account.displayName), element('small', '', account.platform));
-  top.append(identity, element('span', 'pill', account.connectionStatus === 'connected' ? 'Connected' : 'Not connected'));
+  const statusLabels = { not_connected: 'Not connected', connecting: 'Connecting…', connected: 'Connected', needs_attention: 'Needs attention', disconnected: 'Disconnected' };
+  top.append(identity, element('span', 'pill', statusLabels[account.connectionStatus] || 'Not connected'));
   card.append(top, element('p', 'account-notes', account.notes || 'No notes added.'));
   const details = element('div', 'account-details');
   details.append(element('span', '', `Activity: ${account.enabledForNewActivity ? 'enabled' : 'disabled'}`), element('span', '', 'Balance: not available'));
   const actions = element('div', 'account-actions'); const edit = element('button', 'button-secondary', 'Edit details');
-  edit.type = 'button'; edit.addEventListener('click', () => openEditForm(account, card)); actions.append(edit); card.append(details, actions); return card;
+  edit.type = 'button'; edit.addEventListener('click', () => openEditForm(account, card)); actions.append(edit);
+  const checkedText = account.lastCheckedAt ? `Last checked ${new Date(account.lastCheckedAt).toLocaleString()}` : 'Never checked';
+  details.append(element('span', '', checkedText));
+  if (account.connectionReason) details.append(element('span', '', account.connectionReason));
+  const check = element('button', 'button-secondary', 'Check connection'); check.type = 'button';
+  check.addEventListener('click', async () => {
+    check.disabled = true;
+    try { await mutate(`/api/accounts/${account.id}/connection/check`, 'POST'); showDashboardMessage('Connection verified.'); }
+    catch (error) { showDashboardMessage(error.message, true); }
+    finally { check.disabled = false; await loadAccounts(); }
+  });
+  actions.append(check);
+  if (['connected', 'needs_attention'].includes(account.connectionStatus)) {
+    const disconnect = element('button', 'button-secondary', 'Disconnect'); disconnect.type = 'button';
+    disconnect.addEventListener('click', async () => {
+      disconnect.disabled = true;
+      try { await mutate(`/api/accounts/${account.id}/connection/disconnect`, 'POST'); showDashboardMessage('Account disconnected.'); }
+      catch (error) { showDashboardMessage(error.message, true); }
+      finally { await loadAccounts(); }
+    });
+    actions.append(disconnect);
+  }
+  card.append(details, actions); return card;
 }
 function openEditForm(account, card) {
   const existing = card.querySelector('.inline-edit-form'); if (existing) { existing.remove(); return; }

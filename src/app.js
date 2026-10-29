@@ -10,7 +10,8 @@ import { createCsrfToken, csrfProtection } from './security/csrf.js';
 import { login, revokeSession } from './services/auth.js';
 import { requireAuth, requireOwner } from './middleware/auth.js';
 import { writeAudit } from './services/audit.js';
-import { listBookmakerIntegrations } from './integrations/bookmakers.js';
+import { getBookmakerConnector, listBookmakerIntegrations } from './integrations/bookmakers.js';
+import { applyConnectorCheck, connectionUpdate } from './services/account-connection.js';
 import { sportyBetDataClient } from './integrations/sportybet-data.js';
 import { CANCELLABLE_INSTRUCTION_STATUSES, transitionInstructionStatus } from './services/instruction-lifecycle.js';
 import { recoverPendingReservationReleases, releaseInstructionReservation } from './services/instruction-reservations.js';
@@ -576,6 +577,57 @@ app.post('/api/accounts', csrfProtection, requireAuthLazy, async (req, res, next
   }
 });
 
+const connectionCheckLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { error: { code: 'RATE_LIMITED', message: 'Too many connection checks; try again later.' } }
+});
+
+async function loadOwnAccount(req) {
+  if (!ObjectId.isValid(req.params.accountId)) return { error: { status: 400, code: 'INVALID_ACCOUNT_ID', message: 'Account ID is invalid.' } };
+  const filter = { _id: new ObjectId(req.params.accountId), ownerUserId: req.user._id };
+  if (req.user.role !== 'owner') filter.platform = { $in: allowedBookmakers(req.user) };
+  const account = await req.app.locals.db.collection('bettingAccounts').findOne(filter);
+  if (!account) return { error: { status: 404, code: 'ACCOUNT_NOT_FOUND', message: 'Account not found.' } };
+  return { account };
+}
+
+// Each account carries its own connection state. "connected" can only come from a connector's own verification;
+// until a verified, permitted connector exists for the bookmaker, a check just records that it could not run.
+app.post('/api/accounts/:accountId/connection/check', connectionCheckLimiter, csrfProtection, requireAuthLazy, async (req, res, next) => {
+  try {
+    const { account, error } = await loadOwnAccount(req);
+    if (error) return res.status(error.status).json({ error: { code: error.code, message: error.message } });
+    let connector = null; let verification = null;
+    try { connector = getBookmakerConnector(account.platform); } catch (connectorError) { if (connectorError.code !== 'BOOKMAKER_CONNECTOR_UNAVAILABLE') throw connectorError; }
+    if (connector && typeof connector.verifyConnection === 'function') {
+      try { verification = await connector.verifyConnection({ accountId: account._id.toString() }); }
+      catch { verification = { ok: false, reason: 'The bookmaker could not be reached. Try again later.' }; }
+    }
+    const result = applyConnectorCheck(account, connector, verification);
+    const updated = await req.app.locals.db.collection('bettingAccounts').findOneAndUpdate({ _id: account._id, ownerUserId: req.user._id }, { $set: result.set }, { returnDocument: 'after' });
+    await writeAudit(req.app.locals.db, { actorUserId: req.user._id, action: 'account.connection_check', requestId: req.requestId, details: { accountId: account._id.toString(), platform: account.platform, from: result.from, to: result.to, outcome: result.set.lastCheckOutcome } });
+    res.setHeader('Cache-Control', 'no-store');
+    if (!result.connected) return res.status(409).json({ error: { code: 'CONNECTION_NOT_VERIFIED', message: result.set.connectionReason || 'Connection could not be verified.' }, account: publicAccount(updated) });
+    res.json({ account: publicAccount(updated), connected: true, message: 'Connection verified.' });
+  } catch (error) { next(error); }
+});
+
+app.post('/api/accounts/:accountId/connection/disconnect', csrfProtection, requireAuthLazy, async (req, res, next) => {
+  try {
+    const { account, error } = await loadOwnAccount(req);
+    if (error) return res.status(error.status).json({ error: { code: error.code, message: error.message } });
+    let update;
+    try { update = connectionUpdate(account, 'disconnected', { reason: 'Disconnected by you.' }); }
+    catch (transitionError) { if (transitionError.code === 'INVALID_CONNECTION_TRANSITION') return res.status(409).json({ error: { code: 'INVALID_CONNECTION_TRANSITION', message: 'This account is not connected.' } }); throw transitionError; }
+    const updated = await req.app.locals.db.collection('bettingAccounts').findOneAndUpdate({ _id: account._id, ownerUserId: req.user._id }, { $set: update.set }, { returnDocument: 'after' });
+    await writeAudit(req.app.locals.db, { actorUserId: req.user._id, action: 'account.disconnect', requestId: req.requestId, details: { accountId: account._id.toString(), platform: account.platform, from: update.from } });
+    res.json({ account: publicAccount(updated) });
+  } catch (error) { next(error); }
+});
+
 app.patch('/api/accounts/:accountId', csrfProtection, requireAuthLazy, async (req, res, next) => {
   try {
     if (!ObjectId.isValid(req.params.accountId)) return res.status(400).json({ error: { code: 'INVALID_ACCOUNT_ID', message: 'Account ID is invalid.' } });
@@ -616,6 +668,10 @@ function publicAccount(account) {
     platform: account.platform,
     notes: account.notes || '',
     connectionStatus: account.connectionStatus,
+    connectionReason: account.connectionReason || null,
+    connectionStatusChangedAt: account.connectionStatusChangedAt || null,
+    lastCheckedAt: account.lastCheckedAt || null,
+    lastCheckOutcome: account.lastCheckOutcome || null,
     capabilities: account.capabilities || [],
     lastSuccessfulSyncAt: account.lastSuccessfulSyncAt || null,
     balanceMinor: account.balanceMinor ?? null,
