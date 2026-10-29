@@ -1,0 +1,90 @@
+diff --git a/public/app.js b/public/app.js
+index f3dcee1..16687fc 100644
+--- a/public/app.js
++++ b/public/app.js
+@@ -299,6 +299,8 @@ function showView(view) {
+   const views = availableViews();
+   activeView = views.includes(view) ? view : views[0];
+   for (const name of VIEW_ORDER) for (const node of viewSections(name)) node.classList.toggle('view-off', name !== activeView);
++  const titles = { overview: 'Overview', betting: 'Betting', accounts: 'Accounts', applications: 'Applications', members: 'Members', operations: 'Operations' };
++  $('#page-title').textContent = titles[activeView] || 'Dashboard';
+   for (const tab of document.querySelectorAll('#view-nav [data-tab]')) {
+     tab.hidden = !views.includes(tab.dataset.tab);
+     const current = tab.dataset.tab === activeView; tab.classList.toggle('active', current);
+diff --git a/public/index.html b/public/index.html
+index f094fe7..55d1550 100644
+--- a/public/index.html
++++ b/public/index.html
+@@ -63,12 +63,12 @@
+       </div>
+     </section>
+     <section id="dashboard" hidden>
+-      <div class="welcome-row"><div><p class="eyebrow">BETGO</p><h2>Dashboard</h2><p id="welcome"></p></div><button id="logout-button" class="button-secondary">Log out</button></div>
++      <div class="welcome-row"><div><p class="eyebrow" id="page-eyebrow">BETGO</p><h2 id="page-title">Dashboard</h2><p id="welcome"></p></div><button id="logout-button" class="button-secondary">Log out</button></div>
+       <section id="member-subscription-panel" data-view="overview" class="panel dashboard-section" hidden><div class="panel-heading"><div><p class="eyebrow">YOUR ACCESS</p><h2>Subscription</h2></div><span class="pill">30-day plan</span></div><div class="metric-grid"><article class="metric"><span>Bookmaker bot</span><strong id="member-bookmaker">—</strong><small>Included in your subscription</small></article><article class="metric"><span>Access expires</span><strong id="member-expiry">—</strong><small id="member-days-left">Expiry is checked by the server</small></article></div><p class="muted small">You can register multiple account labels for your subscribed bookmaker. These records do not connect to or log in to the bookmaker yet.</p></section>
+       <section id="password-change-panel" data-view="overview" class="panel dashboard-section" hidden><div class="panel-heading"><div><p class="eyebrow">ACCOUNT SECURITY</p><h2>Change temporary password</h2></div></div><form id="password-change-form" class="account-form"><label for="temporary-password">Temporary password</label><input id="temporary-password" type="password" required autocomplete="current-password"><label for="new-password">New password (at least 12 characters)</label><input id="new-password" type="password" minlength="12" required autocomplete="new-password"><button type="submit">Change password</button></form><p id="password-change-message" role="status" hidden></p></section>
+       <section id="admin-applications-section" data-view="applications" class="panel dashboard-section" hidden><div class="panel-heading"><div><p class="eyebrow">MEMBERSHIP ADMIN</p><h2>Applications</h2></div><button id="refresh-applications" class="button-secondary" type="button">Refresh</button></div><p class="muted small">Approval initializes a Flutterwave payment and sends the link. Rejection requires a reason. Email and payment credentials must be configured in Render.</p><p id="applications-message" role="status" hidden></p><div id="applications-list" class="account-list"></div></section>
+       <section id="admin-users-section" data-view="members" class="panel dashboard-section" hidden><div class="panel-heading"><div><p class="eyebrow">MEMBERSHIP ADMIN</p><h2>Members</h2></div><button id="refresh-users" class="button-secondary" type="button">Refresh</button></div><label for="user-search">Search by email</label><input id="user-search" type="search" maxlength="100" placeholder="member@example.com" autocomplete="off"><p id="users-message" role="status" hidden></p><div id="users-list" class="account-list"></div></section>
+-      <nav id="view-nav" class="section-nav" aria-label="Dashboard pages"><a href="#overview" data-tab="overview">Overview</a><a href="#betting" data-tab="betting">Betting</a><a href="#accounts" data-tab="accounts">Accounts</a><a href="#applications" data-tab="applications">Applications</a><a href="#members" data-tab="members">Members</a><a href="#operations" data-tab="operations">Operations</a></nav>
++      <nav id="view-nav" class="section-nav" aria-label="Dashboard pages"><a href="#overview" data-tab="overview">Overview</a><a href="#betting" data-tab="betting">Betting</a><a href="#accounts" data-tab="accounts">Accounts</a><a href="#applications" data-tab="applications">Requests</a><a href="#members" data-tab="members">Members</a><a href="#operations" data-tab="operations">Control</a></nav>
+       <div class="metric-grid" data-view="overview">
+         <article class="metric"><span>Account records</span><strong id="account-count">0</strong><small>Records only; not live connections</small></article>
+         <article class="metric"><span>Automatic betting</span><strong class="off-value">OFF</strong><small>Disabled by default</small></article>
+diff --git a/public/styles.css b/public/styles.css
+index 90f0e84..22cfce8 100644
+--- a/public/styles.css
++++ b/public/styles.css
+@@ -121,3 +121,53 @@ textarea { min-height: 90px; }
+ .live-dot { width: 7px; height: 7px; border-radius: 50%; background: #ff5560; }
+ @media (prefers-reduced-motion: no-preference) { .live-dot { animation: live-pulse 1.4s ease-in-out infinite; } }
+ @keyframes live-pulse { 50% { opacity: .35; } }
++
++/* ===== App layout v2: signed-out landing, signed-in sidebar app, two-column betting page ===== */
++.topbar { position: sticky; top: 0; z-index: 40; background: rgba(11,18,24,.88); backdrop-filter: blur(14px); }
++#view-nav a::before { display: inline-block; width: 1.3em; text-align: center; margin-right: 2px; opacity: .9; }
++#view-nav a[data-tab="overview"]::before { content: "⌂"; }
++#view-nav a[data-tab="betting"]::before { content: "⚽"; }
++#view-nav a[data-tab="accounts"]::before { content: "▤"; }
++#view-nav a[data-tab="applications"]::before { content: "✓"; }
++#view-nav a[data-tab="members"]::before { content: "☺"; }
++#view-nav a[data-tab="operations"]::before { content: "⚠"; }
++
++/* Signed in: the marketing hero is not needed inside the app */
++body:has(#dashboard:not([hidden])) .hero { display: none; }
++body:has(#dashboard:not([hidden])) footer { margin-top: 24px; }
++#dashboard .welcome-row { padding-bottom: 16px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
++#dashboard .welcome-row h2 { font-size: 26px; margin: 2px 0; }
++#dashboard .panel { margin-bottom: 0; }
++#dashboard { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; align-items: start; }
++#dashboard > * { grid-column: 1 / -1; }
++
++/* Desktop */
++@media (min-width: 900px) {
++  /* Signed out: pitch on the left, sign-in on the right */
++  main.shell:has(#dashboard[hidden]) { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(360px, .9fr); gap: 40px; align-items: start; max-width: 1100px; }
++  main.shell:has(#dashboard[hidden]) .hero { display: grid; grid-template-columns: 1fr; gap: 24px; padding: 40px 0 0; position: sticky; top: 110px; }
++  main.shell:has(#dashboard[hidden]) #login-panel { margin: 0; }
++  main.shell:has(#dashboard[hidden]) footer { grid-column: 1 / -1; }
++
++  body:has(#dashboard:not([hidden])) .topbar { padding: 0 40px 0 24px; }
++  /* Signed in: fixed sidebar, content on the right */
++  body:has(#dashboard:not([hidden])) main.shell { max-width: none; margin: 0; padding: 28px 40px 24px 280px; }
++  #view-nav { position: fixed; left: 0; top: 76px; bottom: 0; width: 240px; display: flex; flex-direction: column; align-items: stretch; gap: 4px; margin: 0; padding: 18px 12px; border: 0; border-right: 1px solid var(--line); border-radius: 0; background: #0e171e; overflow-y: auto; z-index: 30; }
++  #view-nav a { display: flex; align-items: center; padding: 12px 14px; font-size: 14px; }
++  #view-nav a.active { box-shadow: inset 3px 0 0 var(--accent); }
++
++  /* Betting: games and odds on the left, ticket always visible on the right */
++  #dashboard { grid-template-columns: minmax(0, 1fr) 390px; }
++  #betting-section, #markets-section { grid-column: 1; }
++  #ticket-section { grid-column: 2; grid-row: 2 / span 12; position: sticky; top: 96px; max-height: calc(100vh - 116px); overflow-y: auto; }
++}
++
++/* Phone and tablet: bottom tab bar */
++@media (max-width: 899px) {
++  #view-nav { position: fixed; left: 0; right: 0; bottom: 0; top: auto; display: flex; justify-content: space-around; gap: 2px; margin: 0; padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px)); border: 0; border-top: 1px solid var(--line); border-radius: 0; background: rgba(14,23,30,.96); backdrop-filter: blur(14px); z-index: 40; }
++  #view-nav a { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 1px; font-size: 9.5px; letter-spacing: -.03em; text-align: center; overflow: hidden; text-overflow: ellipsis; }
++  #view-nav a::before { font-size: 18px; margin: 0; }
++  #view-nav a.active { box-shadow: inset 0 3px 0 var(--accent); }
++  body:has(#dashboard:not([hidden])) main.shell { padding-bottom: 96px; }
++  #dashboard .welcome-row h2 { font-size: 22px; }
++}
