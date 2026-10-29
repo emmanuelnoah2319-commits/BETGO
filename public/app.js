@@ -162,6 +162,7 @@ async function loadDashboard() {
     const { user } = await request('/api/me'); $('#welcome').textContent = `Signed in as ${user.email}`;
     $('#login-panel').hidden = true; $('#dashboard').hidden = false; $('#dashboard-error').hidden = true;
     $('#admin-applications-section').hidden = user.role !== 'owner';
+    $('#admin-users-section').hidden = user.role !== 'owner';
     $('#member-subscription-panel').hidden = user.role === 'owner';
     if (user.role !== 'owner') {
       const subscriptions = user.subscriptions || [];
@@ -181,7 +182,7 @@ async function loadDashboard() {
     } else { for (const option of $('#account-platform').options) option.disabled = false; }
     $('#password-change-panel').hidden = !user.mustChangePassword;
     if (user.mustChangePassword) return;
-    await Promise.all([loadAccounts(), loadIntegrations(), loadSafetyPolicy(), loadInstructions(), ...(user.role === 'owner' ? [loadApplications()] : [])]);
+    await Promise.all([loadAccounts(), loadIntegrations(), loadSafetyPolicy(), loadInstructions(), ...(user.role === 'owner' ? [loadApplications(), loadUsers()] : [])]);
   } catch (error) {
     if (error.message === 'Login required' || error.message.includes('Session')) return showLogin();
     $('#dashboard-error').hidden = false; $('#dashboard-error').textContent = error.message;
@@ -345,3 +346,32 @@ $('#reset-form').addEventListener('submit', async (event) => {
   finally { button.disabled = false; button.textContent = 'Set new password'; }
 });
 readResetTokenFromUrl();
+
+async function loadUsers() {
+  const q = $('#user-search').value.trim();
+  const { users } = await request(`/api/admin/users${q ? `?q=${encodeURIComponent(q)}` : ''}`);
+  const list = $('#users-list'); list.replaceChildren();
+  if (!users.length) { list.append(element('p', 'empty-state', q ? 'No members match that search.' : 'No members yet.')); return; }
+  for (const user of users) {
+    const card = element('article', 'account-card'); const top = element('div', 'account-card-top'); const identity = element('div');
+    identity.append(element('strong', '', user.fullName || user.email), element('small', '', user.email));
+    top.append(identity, element('span', 'pill', user.disabled ? 'Deactivated' : 'Active')); card.append(top);
+    const subs = user.subscriptions.length
+      ? user.subscriptions.map((item) => `${item.bookmaker}: ${item.active ? 'active' : 'expired'}${item.expiresAt ? ` until ${new Date(item.expiresAt).toLocaleDateString()}` : ''}`).join(' · ')
+      : 'No subscriptions';
+    card.append(element('p', 'fixture-meta', subs));
+    if (user.disabledReason) card.append(element('p', 'fixture-meta', `Reason: ${user.disabledReason}`));
+    const actions = element('div', 'account-actions');
+    const act = (label, handler) => { const button = element('button', 'button-secondary', label); button.type = 'button'; button.addEventListener('click', async () => { button.disabled = true; try { const result = await handler(); showMessage('users-message', result.message); await loadUsers(); } catch (error) { showMessage('users-message', error.message, true); button.disabled = false; } }); actions.append(button); };
+    if (!user.disabled) {
+      act('Send reset link', () => mutate(`/api/admin/users/${user.id}/reset-password`, 'POST'));
+      act('Deactivate', () => { if (!window.confirm(`Deactivate ${user.email}? They will be signed out everywhere.`)) return Promise.reject(new Error('Cancelled.')); const reason = window.prompt('Reason (optional)') || ''; return mutate(`/api/admin/users/${user.id}/deactivate`, 'POST', { reason }); });
+    } else {
+      act('Reactivate', () => mutate(`/api/admin/users/${user.id}/reactivate`, 'POST'));
+    }
+    card.append(actions); list.append(card);
+  }
+}
+$('#refresh-users').addEventListener('click', async () => { try { await loadUsers(); showMessage('users-message', 'Members refreshed.'); } catch (error) { showMessage('users-message', error.message, true); } });
+let userSearchTimer = null;
+$('#user-search').addEventListener('input', () => { clearTimeout(userSearchTimer); userSearchTimer = setTimeout(() => { loadUsers().catch((error) => showMessage('users-message', error.message, true)); }, 300); });

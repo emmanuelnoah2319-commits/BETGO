@@ -17,6 +17,7 @@ import { CANCELLABLE_INSTRUCTION_STATUSES, transitionInstructionStatus } from '.
 import { recoverPendingReservationReleases, releaseInstructionReservation } from './services/instruction-reservations.js';
 import { getOperationalControl, setEmergencyStop } from './services/operational-control.js';
 import { sendEmail } from './services/notifications.js';
+import { escapeRegex, manageBlock, publicUser } from './services/user-admin.js';
 import { MIN_PASSWORD_LENGTH, completePasswordReset, requestPasswordReset } from './services/password-reset.js';
 import { initializeFlutterwavePayment, verifyFlutterwavePayment } from './services/payments.js';
 import { capStakeToNetProfit } from './services/profit-cap.js';
@@ -282,6 +283,67 @@ app.post('/api/subscriptions/renew', authLimiter, csrfProtection, requireAuthLaz
     }
     await writeAudit(db, { actorUserId: req.user._id, action: 'subscription.renewal_request', requestId: req.requestId, details: { applicationId: result.insertedId.toString(), bookmaker } });
     res.status(201).json({ message: 'Renewal request received. BETGO will email your payment link after review.', application: { id: result.insertedId.toString(), status: application.status } });
+  } catch (error) { next(error); }
+});
+
+const deactivateUserSchema = z.object({ reason: z.string().trim().max(200).optional().default('') }).strict();
+
+async function loadManagedUser(req) {
+  if (!ObjectId.isValid(req.params.userId)) return { block: { status: 400, code: 'INVALID_USER_ID', message: 'User ID is invalid.' } };
+  const target = await req.app.locals.db.collection('users').findOne({ _id: new ObjectId(req.params.userId) }, { projection: { passwordHash: 0 } });
+  return { target, block: manageBlock(req.user, target) };
+}
+
+app.get('/api/admin/users', requireAuthLazy, requireOwner, async (req, res, next) => {
+  try {
+    const q = typeof req.query.q === 'string' ? req.query.q.trim().toLowerCase().slice(0, 100) : '';
+    const filter = { role: { $ne: 'owner' }, ...(q ? { emailNormalized: { $regex: escapeRegex(q) } } : {}) };
+    const users = await req.app.locals.db.collection('users').find(filter, { projection: { passwordHash: 0 } }).sort({ createdAt: -1 }).limit(100).toArray();
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ users: users.map((user) => publicUser(user)) });
+  } catch (error) { next(error); }
+});
+
+// Sends the member a normal reset link by email; the owner never sees a token or sets a password for them.
+app.post('/api/admin/users/:userId/reset-password', authLimiter, csrfProtection, requireAuthLazy, requireOwner, async (req, res, next) => {
+  try {
+    const { target, block } = await loadManagedUser(req);
+    if (block) return res.status(block.status).json({ error: { code: block.code, message: block.message } });
+    if (target.disabledAt) return res.status(409).json({ error: { code: 'USER_DISABLED', message: 'Reactivate this member before sending a reset link.' } });
+    const config = req.app.locals.config;
+    const result = await requestPasswordReset(req.app.locals.db, { email: target.email, appOrigin: config.appOrigin, requestId: req.requestId, sendEmail: (message) => sendEmail(config, message) });
+    await writeAudit(req.app.locals.db, { actorUserId: req.user._id, action: 'admin.user_password_reset', outcome: result.sent ? 'success' : result.reason, requestId: req.requestId, details: { targetUserId: target._id.toString() } });
+    if (result.reason === 'cooldown') return res.status(429).json({ error: { code: 'RESET_RECENTLY_SENT', message: 'A reset link was sent a moment ago. Wait a minute before sending another.' } });
+    if (!result.sent) return res.status(502).json({ error: { code: 'EMAIL_FAILED', message: 'The reset email could not be sent. Check the email settings and try again.' } });
+    res.json({ message: `Reset link sent to ${target.email}. It expires in 30 minutes.` });
+  } catch (error) { next(error); }
+});
+
+app.post('/api/admin/users/:userId/deactivate', csrfProtection, requireAuthLazy, requireOwner, async (req, res, next) => {
+  try {
+    const parsed = deactivateUserSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Reason must be 200 characters or fewer.' } });
+    const { target, block } = await loadManagedUser(req);
+    if (block) return res.status(block.status).json({ error: { code: block.code, message: block.message } });
+    const db = req.app.locals.db; const now = new Date();
+    const result = await db.collection('users').updateOne({ _id: target._id, role: { $ne: 'owner' }, disabledAt: null }, { $set: { disabledAt: now, disabledReason: parsed.data.reason || null, updatedAt: now }, $inc: { authVersion: 1 } });
+    if (result.modifiedCount !== 1) return res.status(409).json({ error: { code: 'ALREADY_DISABLED', message: 'This member is already deactivated.' } });
+    await db.collection('sessions').updateMany({ userId: target._id, revokedAt: null }, { $set: { revokedAt: now } });
+    await db.collection('bettingAccounts').updateMany({ ownerUserId: target._id }, { $set: { enabledForNewActivity: false, integrationAuthorized: false, updatedAt: now } });
+    await writeAudit(db, { actorUserId: req.user._id, action: 'admin.user_deactivate', requestId: req.requestId, details: { targetUserId: target._id.toString() } });
+    res.json({ message: 'Member deactivated and signed out everywhere.' });
+  } catch (error) { next(error); }
+});
+
+app.post('/api/admin/users/:userId/reactivate', csrfProtection, requireAuthLazy, requireOwner, async (req, res, next) => {
+  try {
+    const { target, block } = await loadManagedUser(req);
+    if (block) return res.status(block.status).json({ error: { code: block.code, message: block.message } });
+    const db = req.app.locals.db;
+    const result = await db.collection('users').updateOne({ _id: target._id, role: { $ne: 'owner' }, disabledAt: { $ne: null } }, { $set: { disabledAt: null, disabledReason: null, updatedAt: new Date() } });
+    if (result.modifiedCount !== 1) return res.status(409).json({ error: { code: 'NOT_DISABLED', message: 'This member is not deactivated.' } });
+    await writeAudit(db, { actorUserId: req.user._id, action: 'admin.user_reactivate', requestId: req.requestId, details: { targetUserId: target._id.toString() } });
+    res.json({ message: 'Member reactivated. Their connections and activity switches stay off until re-enabled.' });
   } catch (error) { next(error); }
 });
 
