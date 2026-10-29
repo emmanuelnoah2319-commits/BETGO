@@ -218,3 +218,17 @@ test('the live list is cached only briefly so in-play odds stay fresh', async ()
   time += 5001; await client.getLiveFixtures();
   assert.equal(calls, 2);
 });
+
+test('searchFixtures reads past the first page so a team further down SportyBet\'s list is still found', async () => {
+  const requestedPages = [];
+  const pageOf = (n) => ({ totalNum: 250, tournaments: [{ name: 'Serie A', categoryName: 'Italy', events: Array.from({ length: n === 3 ? 50 : 100 }, (_, i) => ({
+    eventId: `sr:match:${n * 1000 + i}`, homeTeamName: n === 3 && i === 7 ? 'Atalanta BC' : `Team ${n}-${i}`, awayTeamName: `Rival ${n}-${i}`, estimateStartTime: 1790000000000 + i, matchStatus: 'not_started', markets: [] })) }] });
+  const client = createSportyBetDataClient({ fetchImpl: routed({
+    liveOrPrematchEvents: response({ tournaments: [] }),
+    pcUpcomingEvents: (url) => { const n = Number(new URL(String(url)).searchParams.get('pageNum')); requestedPages.push(n); return response(pageOf(n)); }
+  }) });
+  const result = await client.searchFixtures('atalanta');
+  assert.deepEqual(result.fixtures.map((fixture) => fixture.homeTeam), ['Atalanta BC']);
+  assert.equal(result.scanned, 250);
+  assert.deepEqual([...requestedPages].sort(), [1, 2, 3]);
+});

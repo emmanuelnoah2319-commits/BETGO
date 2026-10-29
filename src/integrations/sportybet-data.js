@@ -69,7 +69,8 @@ export function fixtureMatches(fixture, tokens) {
 
 export const SEARCH_MIN_LENGTH = 2;
 export const SEARCH_MAX_LENGTH = 60;
-const SEARCH_PAGES = 4;
+const SEARCH_MAX_PAGES = 25;
+const SEARCH_CHUNK = 5;
 const SEARCH_PAGE_SIZE = 100;
 const SEARCH_MAX_RESULTS = 20;
 const LIVE_CACHE_TTL_MS = 5000;
@@ -156,6 +157,24 @@ export function createSportyBetDataClient({
 
   const EVENT_ID_PATTERN = /^sr:match:\d+$/;
 
+  // SportyBet lists thousands of matches a month, so one page is never enough. Read page 1, use its total to decide how many
+  // more pages exist (capped), and fetch them a few at a time. Pages are cached briefly, so repeat searches are cheap.
+  async function loadSearchPages() {
+    const first = await getFixtures({ limit: SEARCH_PAGE_SIZE, timeline: 720, pageNum: 1 });
+    const pages = [first];
+    const total = Number(first.total);
+    const lastPage = Number.isFinite(total) && total > first.fixtures.length
+      ? Math.min(SEARCH_MAX_PAGES, Math.ceil(total / SEARCH_PAGE_SIZE))
+      : (first.fixtures.length >= SEARCH_PAGE_SIZE ? SEARCH_MAX_PAGES : 1);
+    for (let start = 2; start <= lastPage; start += SEARCH_CHUNK) {
+      const numbers = Array.from({ length: Math.min(SEARCH_CHUNK, lastPage - start + 1) }, (_, index) => start + index);
+      const batch = await Promise.all(numbers.map((pageNum) => getFixtures({ limit: SEARCH_PAGE_SIZE, timeline: 720, pageNum }).catch(() => null)));
+      pages.push(...batch.filter(Boolean));
+      if (batch.some((page) => page && page.fixtures.length === 0)) break; // ran past the last page
+    }
+    return pages;
+  }
+
   // Search only runs when the user types a game. Nothing is listed up front, and only matches that have not started are returned.
   async function searchFixtures(query) {
     const text = String(query ?? '').trim();
@@ -164,11 +183,7 @@ export function createSportyBetDataClient({
     }
     const tokens = searchTokens(text);
     if (!tokens.length) throw providerError('Type a team or competition name to search.', 'INVALID_SEARCH', 400);
-    const [live, ...pages] = await Promise.all([
-      getLiveFixtures().catch(() => null),
-      ...Array.from({ length: SEARCH_PAGES }, (_, index) =>
-        getFixtures({ limit: SEARCH_PAGE_SIZE, timeline: 720, pageNum: index + 1 }).catch((error) => (index === 0 ? Promise.reject(error) : null)))
-    ]);
+    const [live, pages] = await Promise.all([getLiveFixtures().catch(() => null), loadSearchPages()]);
     const seen = new Set();
     const matches = [];
     const consider = (fixture) => {
@@ -181,10 +196,11 @@ export function createSportyBetDataClient({
     // The live feed goes first so an in-play game is never shown from a stale upcoming listing.
     for (const fixture of live?.fixtures || []) consider(fixture);
     for (const page of pages) for (const fixture of page?.fixtures || []) if (fixture.matchStatus === 'not_started') consider(fixture);
+    const scanned = seen.size;
     matches.sort((a, b) => (Number(b.isLive) - Number(a.isLive)) || String(a.startTime).localeCompare(String(b.startTime)));
     return {
       provider: 'SportyBet', query: text, fetchedAt: new Date(now()).toISOString(), fixtures: matches.slice(0, SEARCH_MAX_RESULTS),
-      truncated: matches.length > SEARCH_MAX_RESULTS, liveAvailable: live !== null,
+      truncated: matches.length > SEARCH_MAX_RESULTS, liveAvailable: live !== null, scanned,
       notice: 'Unofficial public web API. Odds can change at any time. No wager was placed.'
     };
   }

@@ -15,7 +15,7 @@
 
 ## Known limits
 - Uses SportyBet's **unofficial** public web API. The per-event endpoint (`/api/ng/factsCenter/event`) was written from memory of its shape and could not be called from the build sandbox. If it fails, the adapter falls back to the fixture list (core markets only) and the UI shows a notice. Verify against the live service on staging.
-- Search scans the first 4 pages (400 games) within 30 days; very distant or obscure games may not appear.
+- Search reads up to 25 pages (2,500 games) within 30 days, using the total reported on page 1; games beyond that cap may not appear.
 - The ticket page does not yet list or approve saved tickets (existing `GET /api/bet-instructions`, approve and cancel routes are ready for it).
 
 ## Live games

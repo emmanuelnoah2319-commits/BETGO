@@ -378,7 +378,7 @@ $('#game-search-form').addEventListener('submit', async (event) => {
 
 function renderGameResults(data, query) {
   const list = $('#game-results'); list.replaceChildren();
-  if (!data.fixtures.length) { list.append(element('p', 'empty-state', `No upcoming or live game matches “${query}”. Check the spelling or try just one team.`)); if (data.liveAvailable === false) list.append(element('p', 'muted small', 'Live games could not be loaded right now.')); return; }
+  if (!data.fixtures.length) { list.append(element('p', 'empty-state', `No upcoming or live game matches “${query}”${data.scanned ? ` (${data.scanned.toLocaleString('en-NG')} games checked)` : ''}. Check the spelling or try just one team.`)); if (data.liveAvailable === false) list.append(element('p', 'muted small', 'Live games could not be loaded right now.')); return; }
   for (const fixture of data.fixtures) {
     const card = element('article', 'account-card'); const top = element('div', 'account-card-top'); const identity = element('div');
     identity.append(element('strong', '', `${fixture.homeTeam} vs ${fixture.awayTeam}`), element('small', '', [fixture.category, fixture.tournament].filter(Boolean).join(' · ')));
