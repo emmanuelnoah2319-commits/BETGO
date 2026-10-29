@@ -7,3 +7,11 @@ export function oddsSourceBlock({ accountPlatform, hasProviderSelection }) {
   }
   return null;
 }
+
+// Prematch odds must match exactly. In-play odds move every few seconds, so a live selection is also accepted when the
+// current odds are higher than the ones the member saw (never lower). The stake cap is always recalculated at the verified odds.
+export function oddsDriftBlock({ submittedOdds, currentOdds, live }) {
+  if (Math.abs(currentOdds - submittedOdds) <= 0.000001) return null;
+  if (live === true && currentOdds > submittedOdds) return null;
+  return { code: 'ODDS_CHANGED' };
+}

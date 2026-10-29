@@ -20,3 +20,12 @@ test('rejects invalid stake, odds, and cap inputs', () => {
   assert.throws(() => capStakeToNetProfit(100, 1, 10000), TypeError);
   assert.throws(() => capStakeToNetProfit(100, 2, 99), TypeError);
 });
+
+test('the resulting net profit never exceeds the cap, even where floating-point division rounds up', () => {
+  for (const odds of [1.07, 1.33, 1.9, 2.37, 3.15, 5.55, 11.3, 87.5]) {
+    for (const cap of [100, 12_345, 1_000_000, 987_654_321]) {
+      const stake = capStakeToNetProfit(100_000_000, odds, cap);
+      assert.ok(Math.floor(stake * (odds - 1)) <= cap, `odds ${odds} cap ${cap} stake ${stake}`);
+    }
+  }
+});

@@ -12,14 +12,14 @@ import { requireAuth, requireOwner } from './middleware/auth.js';
 import { writeAudit } from './services/audit.js';
 import { getBookmakerConnector, listBookmakerIntegrations } from './integrations/bookmakers.js';
 import { applyConnectorCheck, connectionUpdate } from './services/account-connection.js';
-import { sportyBetDataClient } from './integrations/sportybet-data.js';
+import { isBettableStatus, sportyBetDataClient } from './integrations/sportybet-data.js';
 import { CANCELLABLE_INSTRUCTION_STATUSES, transitionInstructionStatus } from './services/instruction-lifecycle.js';
 import { recoverPendingReservationReleases, releaseInstructionReservation } from './services/instruction-reservations.js';
 import { getOperationalControl, setEmergencyStop } from './services/operational-control.js';
 import { emailSenderStatus, sendEmail } from './services/notifications.js';
 import { PAYMENT_REFERENCE_PATTERN, activateVerifiedPayment } from './services/payment-activation.js';
 import { approveApplication, rejectApplication, resendPaymentEmail } from './services/application-review.js';
-import { oddsSourceBlock } from './services/ticket-rules.js';
+import { oddsDriftBlock, oddsSourceBlock } from './services/ticket-rules.js';
 import { MAX_COMBINED_ODDS, MAX_LEGS, combinedOdds, legsBlock } from './services/ticket-math.js';
 import { escapeRegex, manageBlock, publicUser } from './services/user-admin.js';
 import { MIN_PASSWORD_LENGTH, completePasswordReset, requestPasswordReset } from './services/password-reset.js';
@@ -62,17 +62,18 @@ const instructionCreateSchema = z.object({
   selectionLabel: z.string().trim().min(1).max(160).optional(),
   eventLabel: z.string().trim().min(1).max(160).optional(),
   notes: z.string().trim().max(300).optional().default(''),
-  legs: z.array(z.object({ eventId: z.string().regex(/^sr:match:\d+$/), marketId: z.string().min(1).max(40), outcomeId: z.string().min(1).max(40), oddsDecimal: z.number().finite().gt(1).max(1000) }).strict()).min(2).max(MAX_LEGS).optional(),
+  legs: z.array(z.object({ eventId: z.string().regex(/^sr:match:\d+$/), marketId: z.string().min(1).max(40), specifier: z.string().max(80).optional(), outcomeId: z.string().min(1).max(40), oddsDecimal: z.number().finite().gt(1).max(1000) }).strict()).min(2).max(MAX_LEGS).optional(),
   oddsDecimal: z.number().finite().gt(1).max(1000).optional(),
   eventId: z.string().regex(/^sr:match:\d+$/).optional(),
   marketId: z.string().min(1).max(40).optional(),
+  specifier: z.string().max(80).optional(),
   outcomeId: z.string().min(1).max(40).optional(),
   maxNetProfitMinor: z.number().int().min(100).max(1_000_000_000).optional(),
   idempotencyKey: z.string().uuid()
 }).strict().superRefine((value, ctx) => {
   if (value.legs) {
     if (value.maxNetProfitMinor === undefined) ctx.addIssue({ code: 'custom', path: ['maxNetProfitMinor'], message: 'An accumulator requires a maximum net-profit cap.' });
-    if ([value.eventId, value.marketId, value.outcomeId, value.oddsDecimal].some((field) => field !== undefined)) ctx.addIssue({ code: 'custom', path: ['legs'], message: 'Send either one selection or a list of legs, not both.' });
+    if ([value.eventId, value.marketId, value.specifier, value.outcomeId, value.oddsDecimal].some((field) => field !== undefined)) ctx.addIssue({ code: 'custom', path: ['legs'], message: 'Send either one selection or a list of legs, not both.' });
     return;
   }
   if (!value.eventLabel || !value.selectionLabel) ctx.addIssue({ code: 'custom', path: ['eventLabel'], message: 'Event and selection are required.' });
@@ -819,24 +820,25 @@ app.post('/api/bet-instructions', csrfProtection, requireAuthLazy, async (req, r
       verifiedLegs = [];
       for (const [index, leg] of input.legs.entries()) {
         const event = current.events[leg.eventId];
-        if (!event || event.matchStatus !== 'not_started') return res.status(409).json({ error: { code: 'EVENT_UNAVAILABLE', message: `Selection ${index + 1} is no longer available (the match started or was removed). Remove it from the slip.` } });
-        const market = event.markets.find((item) => item.marketId === leg.marketId && item.status === 'active');
+        if (!event || !isBettableStatus(event.matchStatus)) return res.status(409).json({ error: { code: 'EVENT_UNAVAILABLE', message: `Selection ${index + 1} is no longer available (the match finished or was removed). Remove it from the slip.` } });
+        const market = event.markets.find((item) => item.marketId === leg.marketId && (item.specifier || '') === (leg.specifier || '') && item.status === 'active');
         const outcome = market?.outcomes.find((item) => item.outcomeId === leg.outcomeId && item.active === true);
         const currentOdds = Number(outcome?.odds);
         if (!Number.isFinite(currentOdds) || currentOdds <= 1) return res.status(409).json({ error: { code: 'OUTCOME_UNAVAILABLE', message: `Selection ${index + 1} (${event.label}) is no longer active. Remove it and review your slip.` } });
-        if (Math.abs(currentOdds - leg.oddsDecimal) > 0.000001) return res.status(409).json({ error: { code: 'ODDS_CHANGED', message: `Odds changed for ${event.label}: ${leg.oddsDecimal.toFixed(2)} to ${currentOdds.toFixed(2)}. Review the updated slip before creating this instruction.` } });
-        verifiedLegs.push({ eventId: leg.eventId, marketId: leg.marketId, outcomeId: leg.outcomeId, oddsDecimal: currentOdds, eventLabel: event.label.slice(0, 160), selectionLabel: `${market.marketName || 'Market'}: ${outcome.name || 'Outcome'}`.slice(0, 160) });
+        if (oddsDriftBlock({ submittedOdds: leg.oddsDecimal, currentOdds, live: event.isLive })) return res.status(409).json({ error: { code: 'ODDS_CHANGED', message: `Odds changed for ${event.label}: ${leg.oddsDecimal.toFixed(2)} to ${currentOdds.toFixed(2)}. Review the updated slip before creating this instruction.` } });
+        verifiedLegs.push({ eventId: leg.eventId, marketId: leg.marketId, specifier: leg.specifier || '', outcomeId: leg.outcomeId, oddsDecimal: currentOdds, eventLabel: event.label.slice(0, 160), selectionLabel: `${market.marketName || 'Market'}${market.specifier ? ` (${market.specifier})` : ''}: ${outcome.name || 'Outcome'}`.slice(0, 160) });
       }
       verifiedOddsDecimal = combinedOdds(verifiedLegs.map((leg) => leg.oddsDecimal));
       if (verifiedOddsDecimal > MAX_COMBINED_ODDS) return res.status(400).json({ error: { code: 'COMBINED_ODDS_TOO_HIGH', message: `Combined odds of ${verifiedOddsDecimal.toFixed(2)} exceed the ${MAX_COMBINED_ODDS} limit. Remove a selection.` } });
     }
     if (input.eventId) {
       const current = await sportyBetDataClient.getMarkets(input.eventId);
-      const market = current.markets.find((item) => item.marketId === input.marketId && item.status === 'active');
+      if (!isBettableStatus(current.matchStatus)) return res.status(409).json({ error: { code: 'EVENT_UNAVAILABLE', message: 'This match has finished or was removed. Search for another game.' } });
+      const market = current.markets.find((item) => item.marketId === input.marketId && (item.specifier || '') === (input.specifier || '') && item.status === 'active');
       const outcome = market?.outcomes.find((item) => item.outcomeId === input.outcomeId && item.active === true);
       const currentOdds = Number(outcome?.odds);
-      if (!Number.isFinite(currentOdds) || currentOdds <= 1) return res.status(409).json({ error: { code: 'OUTCOME_UNAVAILABLE', message: 'This outcome is no longer active. Reload fixtures and choose another selection.' } });
-      if (Math.abs(currentOdds - input.oddsDecimal) > 0.000001) return res.status(409).json({ error: { code: 'ODDS_CHANGED', message: `Odds changed from ${input.oddsDecimal.toFixed(2)} to ${currentOdds.toFixed(2)}. Review the updated odds before creating this instruction.` } });
+      if (!Number.isFinite(currentOdds) || currentOdds <= 1) return res.status(409).json({ error: { code: 'OUTCOME_UNAVAILABLE', message: 'This outcome is no longer active. Search for the game again and choose another selection.' } });
+      if (oddsDriftBlock({ submittedOdds: input.oddsDecimal, currentOdds, live: current.isLive })) return res.status(409).json({ error: { code: 'ODDS_CHANGED', message: `Odds changed from ${input.oddsDecimal.toFixed(2)} to ${currentOdds.toFixed(2)}. Review the updated odds before creating this instruction.` } });
       verifiedOddsDecimal = currentOdds;
     }
     // Apply the profit cap server-side. The entered stake is a ceiling; never increase it.
@@ -865,7 +867,7 @@ app.post('/api/bet-instructions', csrfProtection, requireAuthLazy, async (req, r
     }
     reservation = { ownerUserId: req.user._id, day, accountField, stakeMinor: effectiveStakeMinor };
     const now = new Date();
-    const instruction = { ownerUserId: req.user._id, accountId, accountLabel: account.displayName, platform: account.platform, eventLabel: verifiedLegs ? `Accumulator · ${verifiedLegs.length} selections` : input.eventLabel, selectionLabel: verifiedLegs ? verifiedLegs.map((leg) => leg.selectionLabel).join(' + ').slice(0, 160) : input.selectionLabel, ticketType: verifiedLegs ? 'accumulator' : 'single', ...(verifiedLegs ? { legs: verifiedLegs } : {}), notes: input.notes, stakeMinor: effectiveStakeMinor, oddsDecimal: verifiedOddsDecimal, eventId: input.eventId, marketId: input.marketId, outcomeId: input.outcomeId, maxNetProfitMinor: input.maxNetProfitMinor, stakeAdjusted: stakeWasAdjusted, currency: 'NGN', status: 'awaiting_approval', idempotencyKey: input.idempotencyKey, reservationDay: day, reservationActive: true, submissionEnabled: false, createdAt: now, updatedAt: now };
+    const instruction = { ownerUserId: req.user._id, accountId, accountLabel: account.displayName, platform: account.platform, eventLabel: verifiedLegs ? `Accumulator · ${verifiedLegs.length} selections` : input.eventLabel, selectionLabel: verifiedLegs ? verifiedLegs.map((leg) => leg.selectionLabel).join(' + ').slice(0, 160) : input.selectionLabel, ticketType: verifiedLegs ? 'accumulator' : 'single', ...(verifiedLegs ? { legs: verifiedLegs } : {}), notes: input.notes, stakeMinor: effectiveStakeMinor, oddsDecimal: verifiedOddsDecimal, eventId: input.eventId, marketId: input.marketId, ...(input.specifier !== undefined ? { specifier: input.specifier } : {}), outcomeId: input.outcomeId, maxNetProfitMinor: input.maxNetProfitMinor, stakeAdjusted: stakeWasAdjusted, currency: 'NGN', status: 'awaiting_approval', idempotencyKey: input.idempotencyKey, reservationDay: day, reservationActive: true, submissionEnabled: false, createdAt: now, updatedAt: now };
     const inserted = await db.collection('betInstructions').insertOne(instruction);
     reservation = null;
     openSlotReserved = false;
@@ -933,7 +935,7 @@ app.post('/api/admin/recover-reservations', csrfProtection, requireAuthLazy, req
 });
 
 function publicInstruction(instruction) {
-  return { id: instruction._id.toString(), accountId: instruction.accountId.toString(), accountLabel: instruction.accountLabel, platform: instruction.platform, eventLabel: instruction.eventLabel, selectionLabel: instruction.selectionLabel, ticketType: instruction.ticketType || 'single', legs: Array.isArray(instruction.legs) ? instruction.legs.map((leg) => ({ eventLabel: leg.eventLabel, selectionLabel: leg.selectionLabel, oddsDecimal: leg.oddsDecimal })) : [], notes: instruction.notes || '', stakeMinor: instruction.stakeMinor, oddsDecimal: instruction.oddsDecimal, eventId: instruction.eventId, marketId: instruction.marketId, outcomeId: instruction.outcomeId, maxNetProfitMinor: instruction.maxNetProfitMinor, stakeAdjusted: instruction.stakeAdjusted === true, currency: instruction.currency, status: instruction.status, reservationReleaseState: instruction.reservationReleaseState || (instruction.reservationActive ? 'active' : 'not_applicable'), submissionEnabled: false, createdAt: instruction.createdAt, updatedAt: instruction.updatedAt };
+  return { id: instruction._id.toString(), accountId: instruction.accountId.toString(), accountLabel: instruction.accountLabel, platform: instruction.platform, eventLabel: instruction.eventLabel, selectionLabel: instruction.selectionLabel, ticketType: instruction.ticketType || 'single', legs: Array.isArray(instruction.legs) ? instruction.legs.map((leg) => ({ eventId: leg.eventId, eventLabel: leg.eventLabel, selectionLabel: leg.selectionLabel, oddsDecimal: leg.oddsDecimal })) : [], notes: instruction.notes || '', stakeMinor: instruction.stakeMinor, oddsDecimal: instruction.oddsDecimal, eventId: instruction.eventId, marketId: instruction.marketId, outcomeId: instruction.outcomeId, maxNetProfitMinor: instruction.maxNetProfitMinor, stakeAdjusted: instruction.stakeAdjusted === true, currency: instruction.currency, status: instruction.status, reservationReleaseState: instruction.reservationReleaseState || (instruction.reservationActive ? 'active' : 'not_applicable'), submissionEnabled: false, createdAt: instruction.createdAt, updatedAt: instruction.updatedAt };
 }
 
 app.get('/api/integrations', requireAuthLazy, (_req, res) => {
@@ -951,6 +953,25 @@ app.get('/api/sportybet/fixtures', requireAuthLazy, async (req, res) => {
       return res.status(400).json({ error: { code: 'INVALID_QUERY', message: 'limit must be 1–100 and timeline must be 1–720 hours.' } });
     }
     const data = await sportyBetDataClient.getFixtures({ limit, timeline });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(data);
+  } catch (error) {
+    res.status(error.status || 502).json({ error: { code: error.code || 'SPORTYBET_UNAVAILABLE', message: error.message || 'SportyBet data is temporarily unavailable.' } });
+  }
+});
+
+const gameSearchLimiter = rateLimit({
+  windowMs: 60 * 1000, limit: 20, standardHeaders: true, legacyHeaders: false,
+  keyGenerator: (req) => `${req.user?._id?.toString() || 'anon'}`,
+  message: { error: { code: 'RATE_LIMITED', message: 'Too many game searches. Wait a minute and try again.' } }
+});
+
+// Games are loaded only when the member types one. There is no browse/preload list.
+app.get('/api/sportybet/search', requireAuthLazy, gameSearchLimiter, async (req, res) => {
+  try {
+    if (!canUseBookmaker(req.user, 'SportyBet')) return res.status(403).json({ error: { code: 'BOOKMAKER_NOT_IN_SUBSCRIPTION', message: 'SportyBet data is part of the SportyBet subscription.' } });
+    if (typeof req.query.q !== 'string') return res.status(400).json({ error: { code: 'INVALID_SEARCH', message: 'Type the game you want to find.' } });
+    const data = await sportyBetDataClient.searchFixtures(req.query.q);
     res.setHeader('Cache-Control', 'no-store');
     res.json(data);
   } catch (error) {

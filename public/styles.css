@@ -83,3 +83,41 @@ textarea { min-height: 90px; }
 
 .view-off { display: none !important; }
 .section-nav a.active { background: var(--accent-dark); color: var(--accent); }
+
+/* Betting workspace */
+.search-row { display: flex; gap: .6rem; align-items: stretch; }
+.search-row input { flex: 1 1 auto; min-width: 0; }
+.search-row button { margin: 0; flex: 0 0 auto; }
+.field-hint { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 6px 0 0; }
+.markets-list { display: grid; gap: 12px; margin-top: 16px; }
+.market-card { background: #101920; border: 1px solid #263640; border-radius: 12px; padding: 14px; }
+.market-card h3 { margin: 0 0 10px; font-size: 13px; letter-spacing: .02em; color: #d8e1e6; }
+.odds-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; }
+.odd-button { margin: 0; flex-direction: column; gap: 4px; align-items: stretch; text-align: center; background: var(--panel2); color: var(--text); border: 1px solid var(--line); padding: 10px 8px; min-height: 56px; }
+.odd-button .odd-name { font-size: 12px; font-weight: 600; color: var(--muted); overflow-wrap: anywhere; }
+.odd-button .odd-value { font-size: 16px; }
+.odd-button:hover:not(:disabled) { border-color: var(--accent); }
+.odd-button.selected { background: var(--accent); border-color: var(--accent); color: #08251c; }
+.odd-button.selected .odd-name { color: #0d3a2c; }
+.ticket-legs { display: grid; gap: 10px; margin-bottom: 18px; }
+.ticket-leg { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 12px; background: #101920; border: 1px solid #263640; border-radius: 12px; padding: 12px 14px; }
+.ticket-leg small { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; overflow-wrap: anywhere; }
+.ticket-leg button { padding: 8px 11px; font-size: 12px; }
+.leg-odds { font-weight: 800; font-size: 16px; color: var(--accent); }
+.ticket-summary { display: grid; gap: 8px; margin: 6px 0 0; padding: 14px; background: #101920; border: 1px solid #263640; border-radius: 12px; }
+.ticket-summary div { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; }
+.ticket-summary dt { color: var(--muted); }
+.ticket-summary dd { margin: 0; font-weight: 750; }
+.ticket-summary .adjusted dd { color: #f0bd68; }
+@media (max-width: 700px) {
+  .search-row { flex-direction: column; }
+  .search-row button { width: 100%; }
+  .ticket-leg { grid-template-columns: 1fr auto; }
+  .ticket-leg button { grid-column: 1 / -1; }
+  .odds-grid { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
+}
+
+.live-badge { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; padding: 3px 9px; border-radius: 99px; background: #3a2027; border: 1px solid #64313a; color: #ff9ba0; font-size: 11px; font-weight: 800; letter-spacing: .06em; }
+.live-dot { width: 7px; height: 7px; border-radius: 50%; background: #ff5560; }
+@media (prefers-reduced-motion: no-preference) { .live-dot { animation: live-pulse 1.4s ease-in-out infinite; } }
+@keyframes live-pulse { 50% { opacity: .35; } }

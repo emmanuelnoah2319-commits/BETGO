@@ -7,7 +7,7 @@
   <meta name="description" content="BETGO private betting management dashboard">
   <title>BETGO — Private Dashboard</title>
   <link rel="stylesheet" href="/styles.css">
-  <script src="/app.js" defer></script>
+  <script type="module" src="/app.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -68,7 +68,7 @@
       <section id="password-change-panel" data-view="overview" class="panel dashboard-section" hidden><div class="panel-heading"><div><p class="eyebrow">ACCOUNT SECURITY</p><h2>Change temporary password</h2></div></div><form id="password-change-form" class="account-form"><label for="temporary-password">Temporary password</label><input id="temporary-password" type="password" required autocomplete="current-password"><label for="new-password">New password (at least 12 characters)</label><input id="new-password" type="password" minlength="12" required autocomplete="new-password"><button type="submit">Change password</button></form><p id="password-change-message" role="status" hidden></p></section>
       <section id="admin-applications-section" data-view="applications" class="panel dashboard-section" hidden><div class="panel-heading"><div><p class="eyebrow">MEMBERSHIP ADMIN</p><h2>Applications</h2></div><button id="refresh-applications" class="button-secondary" type="button">Refresh</button></div><p class="muted small">Approval initializes a Flutterwave payment and sends the link. Rejection requires a reason. Email and payment credentials must be configured in Render.</p><p id="applications-message" role="status" hidden></p><div id="applications-list" class="account-list"></div></section>
       <section id="admin-users-section" data-view="members" class="panel dashboard-section" hidden><div class="panel-heading"><div><p class="eyebrow">MEMBERSHIP ADMIN</p><h2>Members</h2></div><button id="refresh-users" class="button-secondary" type="button">Refresh</button></div><label for="user-search">Search by email</label><input id="user-search" type="search" maxlength="100" placeholder="member@example.com" autocomplete="off"><p id="users-message" role="status" hidden></p><div id="users-list" class="account-list"></div></section>
-      <nav id="view-nav" class="section-nav" aria-label="Dashboard pages"><a href="#overview" data-tab="overview">Overview</a><a href="#accounts" data-tab="accounts">Accounts</a><a href="#applications" data-tab="applications">Applications</a><a href="#members" data-tab="members">Members</a><a href="#operations" data-tab="operations">Operations</a></nav>
+      <nav id="view-nav" class="section-nav" aria-label="Dashboard pages"><a href="#overview" data-tab="overview">Overview</a><a href="#betting" data-tab="betting">Betting</a><a href="#accounts" data-tab="accounts">Accounts</a><a href="#applications" data-tab="applications">Applications</a><a href="#members" data-tab="members">Members</a><a href="#operations" data-tab="operations">Operations</a></nav>
       <div class="metric-grid" data-view="overview">
         <article class="metric"><span>Account records</span><strong id="account-count">0</strong><small>Records only; not live connections</small></article>
         <article class="metric"><span>Automatic betting</span><strong class="off-value">OFF</strong><small>Disabled by default</small></article>
@@ -88,6 +88,46 @@
         </form>
         <p id="account-message" role="status" hidden></p>
         <div id="account-list" class="account-list" aria-live="polite"><p class="empty-state">Loading account records…</p></div>
+      </section>
+      <section id="betting-section" data-view="betting" class="panel dashboard-section">
+        <div class="panel-heading"><div><p class="eyebrow">BETTING WORKSPACE</p><h2>Find a game</h2></div><span class="pill">Review only</span></div>
+        <form id="game-search-form" role="search">
+          <label for="game-search-input">Type the game you want</label>
+          <div class="search-row"><input id="game-search-input" type="search" required minlength="2" maxlength="60" autocomplete="off" placeholder="e.g. Arsenal vs Chelsea"><button id="game-search-button" type="submit">Search</button></div>
+        </form>
+        <p class="field-hint">Nothing is loaded until you search. Upcoming and live games are shown with SportyBet's current odds. Finished games are not.</p>
+        <p id="game-search-message" role="status" hidden></p>
+        <div id="game-results" class="account-list" aria-live="polite"></div>
+      </section>
+      <section id="markets-section" data-view="betting" class="panel dashboard-section" hidden>
+        <div class="panel-heading"><div><p class="eyebrow" id="markets-eyebrow">ODDS</p><h2 id="markets-title">Markets</h2></div><button id="markets-refresh" class="button-secondary" type="button">Refresh odds</button></div>
+        <p id="markets-meta" class="muted small"></p>
+        <p id="markets-notice" class="form-error" role="status" hidden></p>
+        <label for="market-filter">Filter markets</label>
+        <input id="market-filter" type="search" maxlength="60" autocomplete="off" placeholder="e.g. over, both teams, handicap">
+        <div id="markets-list" class="markets-list"></div>
+      </section>
+      <section id="ticket-section" data-view="betting" class="panel dashboard-section">
+        <div class="panel-heading"><div><p class="eyebrow">BET TICKET</p><h2>Your ticket</h2></div><span id="ticket-count" class="pill">0 selections</span></div>
+        <div id="ticket-legs" class="ticket-legs"><p class="empty-state">No selections yet. Search for a game and tap an odd to add it.</p></div>
+        <form id="ticket-form" class="account-form" novalidate>
+          <label for="ticket-account">SportyBet account record</label>
+          <select id="ticket-account" required></select>
+          <div class="form-grid">
+            <div><label for="ticket-stake">Stake (₦)</label><input id="ticket-stake" inputmode="decimal" autocomplete="off" placeholder="e.g. 5000"></div>
+            <div><label for="ticket-max-profit">Max profit (₦)</label><input id="ticket-max-profit" inputmode="decimal" autocomplete="off" placeholder="e.g. 20000"></div>
+          </div>
+          <p class="field-hint">If the stake would win more than your max profit, the stake is lowered automatically so the profit stays within it. It is never raised.</p>
+          <dl id="ticket-summary" class="ticket-summary" hidden></dl>
+          <p id="ticket-hint" class="muted small" role="status" aria-live="polite"></p>
+          <p id="ticket-message" role="status" hidden></p>
+          <div class="form-actions">
+            <button id="ticket-submit" type="submit" disabled>Save ticket for review</button>
+            <button id="ticket-refresh" class="button-secondary" type="button">Refresh odds</button>
+            <button id="ticket-clear" class="button-secondary" type="button">Clear ticket</button>
+          </div>
+        </form>
+        <p class="muted small">Saving a ticket records it for your approval. BETGO does not place the bet or send anything to SportyBet.</p>
       </section>
       <section id="integrations-section" data-view="overview" class="panel dashboard-section">
         <div class="panel-heading"><div><p class="eyebrow">BOOKMAKER CONNECTIONS</p><h2>Integration status</h2></div><span class="pill">Not connected</span></div>
