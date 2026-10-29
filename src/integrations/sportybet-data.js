@@ -197,7 +197,7 @@ export function createSportyBetDataClient({
     };
     // The live feed goes first so an in-play game is never shown from a stale upcoming listing.
     for (const fixture of live?.fixtures || []) consider(fixture);
-    for (const page of pages) for (const fixture of page?.fixtures || []) if (fixture.matchStatus === 'not_started') consider(fixture);
+    for (const page of pages) for (const fixture of page?.fixtures || []) if (fixture.matchStatus === 'not_started' || fixture.matchStatus === 'unknown') consider({ ...fixture, matchStatus: 'not_started' });
     const scanned = seen.size;
     matches.sort((a, b) => (Number(b.isLive) - Number(a.isLive)) || String(a.startTime).localeCompare(String(b.startTime)));
     return {
