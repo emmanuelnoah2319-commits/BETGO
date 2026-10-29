@@ -15,6 +15,7 @@ export async function ensureIndexes(db) {
   await Promise.all([
     db.collection('users').createIndex({ emailNormalized: 1 }, { unique: true }),
     db.collection('applications').createIndex({ emailNormalized: 1, status: 1 }),
+    ensureOpenApplicationIndex(db),
     db.collection('applications').createIndex({ createdAt: -1 }),
     db.collection('payments').createIndex({ reference: 1 }, { unique: true }),
     db.collection('payments').createIndex({ applicationId: 1, createdAt: -1 }),
@@ -35,4 +36,17 @@ export async function ensureIndexes(db) {
     db.collection('notificationDevices').createIndex({ ownerUserId: 1, tokenHash: 1 }, { unique: true }),
     db.collection('systemHealth').createIndex({ checkedAt: -1 })
   ]);
+}
+
+// One open application per email per bookmaker. Needs MongoDB 6.0+ for $in in a partial index; older servers
+// fall back to a plain index, and the application routes still enforce the rule in code.
+async function ensureOpenApplicationIndex(db) {
+  const keys = { emailNormalized: 1, bookmaker: 1 };
+  try {
+    await db.collection('applications').createIndex(keys, { name: 'open_application_per_email_bookmaker', unique: true, partialFilterExpression: { status: { $in: ['pending', 'approved_awaiting_payment'] } } });
+  } catch (error) {
+    if (error?.code === 85 || error?.code === 86) throw error; // index exists with different options: needs a manual look
+    console.warn(JSON.stringify({ level: 'warn', event: 'open_application_unique_index_unavailable', errorCode: error?.code || null }));
+    await db.collection('applications').createIndex(keys, { name: 'application_email_bookmaker' });
+  }
 }

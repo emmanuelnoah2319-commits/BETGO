@@ -141,13 +141,20 @@ async function loadDashboard() {
     $('#admin-applications-section').hidden = user.role !== 'owner';
     $('#member-subscription-panel').hidden = user.role === 'owner';
     if (user.role !== 'owner') {
-      $('#member-bookmaker').textContent = user.bookmaker || 'Not assigned';
-      const expiry = user.subscriptionExpiresAt ? new Date(user.subscriptionExpiresAt) : null;
+      const subscriptions = user.subscriptions || [];
+      const active = subscriptions.filter((item) => item.active);
+      $('#member-bookmaker').textContent = active.length ? active.map((item) => item.bookmaker).join(', ') : (user.bookmaker || 'Not assigned');
+      const expiries = active.map((item) => (item.expiresAt ? new Date(item.expiresAt) : null)).filter((date) => date && !Number.isNaN(date.getTime()));
+      const expiry = expiries.length ? new Date(Math.min(...expiries.map((date) => date.getTime()))) : (user.subscriptionExpiresAt ? new Date(user.subscriptionExpiresAt) : null);
       $('#member-expiry').textContent = expiry && !Number.isNaN(expiry.getTime()) ? expiry.toLocaleDateString() : 'Not available';
-      const days = expiry ? Math.max(0, Math.ceil((expiry.getTime() - Date.now()) / 86400000)) : null;
-      $('#member-days-left').textContent = days === null ? 'Contact support if this looks incorrect.' : days === 0 ? 'Subscription expired' : `${days} day${days === 1 ? '' : 's'} remaining`;
-      for (const option of $('#account-platform').options) option.disabled = option.value !== user.bookmaker;
-      if (user.bookmaker) $('#account-platform').value = user.bookmaker;
+      const daysLeft = (item) => (item.expiresAt ? Math.max(0, Math.ceil((new Date(item.expiresAt).getTime() - Date.now()) / 86400000)) : null);
+      $('#member-days-left').textContent = subscriptions.length
+        ? subscriptions.map((item) => { const days = daysLeft(item); return `${item.bookmaker}: ${!item.active ? 'expired' : days === null ? 'no expiry' : `${days} day${days === 1 ? '' : 's'} left`}`; }).join(' · ')
+        : 'Contact support if this looks incorrect.';
+      renderRenewals(subscriptions);
+      const allowed = active.length ? active.map((item) => item.bookmaker) : (user.bookmaker ? [user.bookmaker] : []);
+      for (const option of $('#account-platform').options) option.disabled = !allowed.includes(option.value);
+      if (allowed.length && !allowed.includes($('#account-platform').value)) $('#account-platform').value = allowed[0];
     } else { for (const option of $('#account-platform').options) option.disabled = false; }
     $('#password-change-panel').hidden = !user.mustChangePassword;
     if (user.mustChangePassword) return;
@@ -237,7 +244,7 @@ $('#application-form').addEventListener('submit', async (event) => {
 async function loadApplications() {
   const { applications } = await request('/api/admin/applications'); const list = $('#applications-list'); list.replaceChildren();
   if (!applications.length) { list.append(element('p', 'empty-state', 'No applications yet.')); return; }
-  for (const item of applications) { const card = element('article', 'account-card'); card.append(element('strong', '', item.fullName), element('p', '', item.email), element('p', 'fixture-meta', `${item.bookmaker} · ₦${Number(item.priceNgn).toLocaleString('en-NG')} / 30 days · ${item.status}`));
+  for (const item of applications) { const card = element('article', 'account-card'); card.append(element('strong', '', item.fullName), element('p', '', item.email), element('p', 'fixture-meta', `${item.bookmaker} · ₦${Number(item.priceNgn).toLocaleString('en-NG')} / 30 days · ${item.type === 'renewal' ? 'renewal · ' : item.type === 'add_bookmaker' ? 'extra bookmaker · ' : ''}${item.status}`));
     if (item.status === 'pending') { const actions = element('div', 'account-actions'); const approve = element('button', '', 'Approve & send payment link'); approve.type = 'button'; approve.addEventListener('click', async () => { approve.disabled = true; try { const result = await mutate(`/api/admin/applications/${encodeURIComponent(item.id)}/approve`, 'POST', {}); showMessage('applications-message', result.message); await loadApplications(); } catch (error) { showMessage('applications-message', error.message, true); approve.disabled = false; } }); const reject = element('button', 'button-secondary', 'Reject'); reject.type = 'button'; reject.addEventListener('click', async () => { const reason = window.prompt('Enter the reason for rejecting this application:'); if (!reason || reason.trim().length < 3) return; reject.disabled = true; try { const result = await mutate(`/api/admin/applications/${encodeURIComponent(item.id)}/reject`, 'POST', { reason: reason.trim() }); showMessage('applications-message', result.message); await loadApplications(); } catch (error) { showMessage('applications-message', error.message, true); reject.disabled = false; } }); actions.append(approve, reject); card.append(actions); }
     list.append(card);
   }
@@ -266,3 +273,21 @@ $('#instruction-form').addEventListener('submit', async (event) => {
 async function loadPlans() { try { const { plans } = await request('/api/plans'); const select = $('#application-bookmaker'); for (const option of select.options) { const plan = plans.find((item) => item.bookmaker === option.value); if (plan) option.textContent = `${plan.bookmaker} — ₦${Number(plan.priceNgn).toLocaleString('en-NG')} / ${plan.durationDays} days`; } } catch { /* Keep the visible defaults if the plans endpoint is temporarily unavailable. */ } }
 loadPlans();
 loadDashboard();
+
+function renderRenewals(subscriptions) {
+  const panel = $('#member-subscription-panel');
+  let box = $('#member-renewals');
+  if (!box) { box = element('div', 'account-actions'); box.id = 'member-renewals'; panel.append(box); }
+  box.replaceChildren();
+  for (const item of subscriptions) {
+    const button = element('button', 'button-secondary', `Renew ${item.bookmaker}`);
+    button.type = 'button';
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      try { const result = await mutate('/api/subscriptions/renew', 'POST', { bookmaker: item.bookmaker }); window.alert(result.message); }
+      catch (error) { window.alert(error.message); }
+      finally { button.disabled = false; }
+    });
+    box.append(button);
+  }
+}

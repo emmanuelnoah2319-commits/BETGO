@@ -2,6 +2,7 @@ import argon2 from 'argon2';
 import { ObjectId } from 'mongodb';
 import { createSessionToken, hashToken } from '../security/sessions.js';
 import { writeAudit } from './audit.js';
+import { isSubscriptionExpired, latestExpiry } from './subscriptions.js';
 
 export async function bootstrapOwner(db, config) {
   if (!config.bootstrapOwnerEmail) return;
@@ -29,7 +30,7 @@ export async function login(db, config, { email, password, requestId }) {
   const passwordMatches = user
     ? await argon2.verify(user.passwordHash, password).catch(() => false)
     : false;
-  const subscriptionExpired = user?.role !== 'owner' && user?.subscriptionExpiresAt && new Date(user.subscriptionExpiresAt) <= new Date();
+  const subscriptionExpired = isSubscriptionExpired(user);
   if (!user || !passwordMatches || subscriptionExpired) {
     await writeAudit(db, { action: 'auth.login', outcome: 'rejected', requestId, details: { reason: 'invalid_credentials' } });
     return null;
@@ -46,7 +47,7 @@ export async function login(db, config, { email, password, requestId }) {
     authVersion: user.authVersion
   });
   await writeAudit(db, { actorUserId: user._id, action: 'auth.login', requestId });
-  return { token: rawToken, expiresAt, sessionId: result.insertedId, user: { id: user._id.toString(), email: user.email, role: user.role, mustChangePassword: user.mustChangePassword === true, subscriptionExpiresAt: user.subscriptionExpiresAt || null } };
+  return { token: rawToken, expiresAt, sessionId: result.insertedId, user: { id: user._id.toString(), email: user.email, role: user.role, mustChangePassword: user.mustChangePassword === true, subscriptionExpiresAt: latestExpiry(user) || user.subscriptionExpiresAt || null } };
 }
 
 export async function revokeSession(db, sessionId, actorUserId, requestId) {

@@ -18,6 +18,7 @@ import { getOperationalControl, setEmergencyStop } from './services/operational-
 import { sendEmail } from './services/notifications.js';
 import { initializeFlutterwavePayment, verifyFlutterwavePayment } from './services/payments.js';
 import { capStakeToNetProfit } from './services/profit-cap.js';
+import { OPEN_APPLICATION_STATUSES, allowedBookmakers, applicationBlock, canUseBookmaker, grantSubscription, hasSubscriptionRecord, latestExpiry, publicSubscriptions, subscriptionsOf } from './services/subscriptions.js';
 
 const supportedPlatforms = ['SportyBet', 'Football.com Nigeria', 'BetWinner', 'Sokabet', 'MSport'];
 const accountCreateSchema = z.object({
@@ -87,6 +88,7 @@ const applicationSchema = z.object({
   bookmaker: z.enum(supportedPlatforms),
   fullName: z.string().trim().min(2).max(100)
 }).strict();
+const renewalSchema = z.object({ bookmaker: z.enum(supportedPlatforms) }).strict();
 const reviewSchema = z.object({ reason: z.string().trim().min(3).max(500).optional() }).strict();
 
 const loginSchema = z.object({
@@ -209,25 +211,54 @@ app.post('/api/applications', authLimiter, csrfProtection, async (req, res, next
     const email = parsed.data.email.trim();
     const emailNormalized = email.toLowerCase();
     const existingUser = await db.collection('users').findOne({ emailNormalized });
-    if (existingUser) return res.status(409).json({ error: { code: 'ACCOUNT_EXISTS', message: 'An account already exists for this email.' } });
-    const pending = await db.collection('applications').findOne({ emailNormalized, status: { $in: ['pending', 'approved_awaiting_payment'] } });
-    if (pending) return res.status(409).json({ error: { code: 'APPLICATION_EXISTS', message: 'An application for this email is already being processed.' } });
+    const pending = await db.collection('applications').findOne({ emailNormalized, bookmaker: parsed.data.bookmaker, status: { $in: OPEN_APPLICATION_STATUSES } });
+    const block = applicationBlock({ user: existingUser, pending, bookmaker: parsed.data.bookmaker });
+    if (block) return res.status(409).json({ error: block });
     const now = new Date();
     const application = {
       fullName: parsed.data.fullName.trim(), email, emailNormalized, bookmaker: parsed.data.bookmaker,
-      priceNgn: req.app.locals.config.bookmakerPricesNgn[parsed.data.bookmaker], status: 'pending',
+      priceNgn: req.app.locals.config.bookmakerPricesNgn[parsed.data.bookmaker], status: 'pending', type: existingUser ? 'add_bookmaker' : 'new',
       createdAt: now, updatedAt: now, reviewedAt: null, reviewedByUserId: null, rejectionReason: null
     };
-    const result = await db.collection('applications').insertOne(application);
+    let result;
+    try { result = await db.collection('applications').insertOne(application); }
+    catch (insertError) {
+      if (insertError?.code === 11000) return res.status(409).json({ error: { code: 'APPLICATION_EXISTS', message: 'An application for this email and bookmaker is already being processed.' } });
+      throw insertError;
+    }
     await writeAudit(db, { action: 'application.submit', requestId: req.requestId, details: { applicationId: result.insertedId.toString(), bookmaker: application.bookmaker } });
     res.status(201).json({ message: 'Application received. BETGO will email you after review.', application: { id: result.insertedId.toString(), status: application.status } });
+  } catch (error) { next(error); }
+});
+
+app.post('/api/subscriptions/renew', authLimiter, csrfProtection, requireAuthLazy, async (req, res, next) => {
+  try {
+    const parsed = renewalSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Choose one of your subscribed bookmakers to renew.' } });
+    if (req.user.role === 'owner') return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Owner accounts do not need subscriptions.' } });
+    const bookmaker = parsed.data.bookmaker;
+    if (!hasSubscriptionRecord(req.user, bookmaker)) return res.status(409).json({ error: { code: 'NO_SUBSCRIPTION_TO_RENEW', message: 'You have not subscribed to this bookmaker yet. Submit an application for it instead.' } });
+    const db = req.app.locals.db;
+    const emailNormalized = req.user.emailNormalized;
+    const pending = await db.collection('applications').findOne({ emailNormalized, bookmaker, status: { $in: OPEN_APPLICATION_STATUSES } });
+    if (pending) return res.status(409).json({ error: { code: 'APPLICATION_EXISTS', message: 'A renewal or application for this bookmaker is already being processed.' } });
+    const now = new Date();
+    const application = { fullName: req.user.fullName || req.user.email, email: req.user.email, emailNormalized, bookmaker, priceNgn: req.app.locals.config.bookmakerPricesNgn[bookmaker], status: 'pending', type: 'renewal', userId: req.user._id, createdAt: now, updatedAt: now, reviewedAt: null, reviewedByUserId: null, rejectionReason: null };
+    let result;
+    try { result = await db.collection('applications').insertOne(application); }
+    catch (insertError) {
+      if (insertError?.code === 11000) return res.status(409).json({ error: { code: 'APPLICATION_EXISTS', message: 'A renewal or application for this bookmaker is already being processed.' } });
+      throw insertError;
+    }
+    await writeAudit(db, { actorUserId: req.user._id, action: 'subscription.renewal_request', requestId: req.requestId, details: { applicationId: result.insertedId.toString(), bookmaker } });
+    res.status(201).json({ message: 'Renewal request received. BETGO will email your payment link after review.', application: { id: result.insertedId.toString(), status: application.status } });
   } catch (error) { next(error); }
 });
 
 app.get('/api/admin/applications', requireAuthLazy, requireOwner, async (req, res) => {
   const applications = await req.app.locals.db.collection('applications').find({}).sort({ createdAt: -1 }).limit(200).toArray();
   res.setHeader('Cache-Control', 'no-store');
-  res.json({ applications: applications.map((item) => ({ id: item._id.toString(), fullName: item.fullName, email: item.email, bookmaker: item.bookmaker, priceNgn: item.priceNgn, status: item.status, createdAt: item.createdAt, rejectionReason: item.rejectionReason || null })) });
+  res.json({ applications: applications.map((item) => ({ id: item._id.toString(), fullName: item.fullName, email: item.email, bookmaker: item.bookmaker, priceNgn: item.priceNgn, type: item.type || 'new', status: item.status, createdAt: item.createdAt, rejectionReason: item.rejectionReason || null })) });
 });
 
 app.post('/api/admin/applications/:applicationId/reject', csrfProtection, requireAuthLazy, requireOwner, async (req, res, next) => {
@@ -352,21 +383,36 @@ app.post('/api/payments/flutterwave/webhook', async (req, res, next) => {
     let now = new Date();
     let subscriptionExpiresAt;
     if (payment.status === 'paid') {
-      if (!user || user.mustChangePassword !== true) return res.status(200).json({ received: true, alreadyProcessed: true });
+      if (payment.createdAccount === false || !user || user.mustChangePassword !== true) return res.status(200).json({ received: true, alreadyProcessed: true });
       // Retry delivery after a transient email-provider failure without extending the paid subscription.
       const temporaryPassword = randomBytes(18).toString('base64url');
       await db.collection('users').updateOne({ _id: user._id, mustChangePassword: true }, { $set: { passwordHash: await argon2.hash(temporaryPassword, { type: argon2.argon2id }), temporaryPasswordIssuedAt: now } });
-      subscriptionExpiresAt = user.subscriptionExpiresAt;
+      subscriptionExpiresAt = latestExpiry(user) || user.subscriptionExpiresAt;
       await sendEmail(req.app.locals.config, { to: application.email, subject: 'BETGO temporary login details', text: `Hello ${application.fullName},\n\nUsername: ${application.email}\nTemporary password: ${temporaryPassword}\nSubscription expires: ${new Date(subscriptionExpiresAt).toISOString()}\n\nSign in at ${req.app.locals.config.appOrigin} and change this temporary password immediately.` });
       return res.status(200).json({ received: true, credentialEmailRetried: true });
     }
     if (payment.status !== 'pending' || application.status !== 'approved_awaiting_payment') return res.status(200).json({ received: true, alreadyProcessed: true });
-    if (user) return res.status(200).json({ received: true, accountExists: true });
+    if (user?.role === 'owner') return res.status(200).json({ received: true, accountExists: true });
+    if (user) {
+      // Existing customer: add this bookmaker (or extend it on renewal) without touching their password or other subscriptions.
+      const grant = grantSubscription(user, application.bookmaker, now);
+      await db.collection('users').updateOne(
+        { _id: user._id, appliedPaymentRefs: { $ne: payment.reference } },
+        { $set: { subscriptions: grant.subscriptions, subscriptionExpiresAt: grant.subscriptionExpiresAt, bookmaker: user.bookmaker || application.bookmaker, updatedAt: now }, $addToSet: { appliedPaymentRefs: payment.reference } }
+      );
+      const refreshed = await db.collection('users').findOne({ _id: user._id });
+      const bookmakerExpiresAt = subscriptionsOf(refreshed).find((item) => item.bookmaker === application.bookmaker)?.expiresAt || grant.bookmakerExpiresAt;
+      await db.collection('payments').updateOne({ _id: payment._id, status: 'pending' }, { $set: { status: 'paid', paidAt: now, flutterwaveTransactionId: verified.id, updatedAt: now, userId: user._id, createdAccount: false } });
+      await db.collection('applications').updateOne({ _id: application._id, status: 'approved_awaiting_payment' }, { $set: { status: 'active', paidAt: now, subscriptionExpiresAt: bookmakerExpiresAt, userId: user._id, updatedAt: now } });
+      await sendEmail(req.app.locals.config, { to: application.email, subject: `BETGO ${application.bookmaker} subscription confirmed`, text: `Hello ${application.fullName},\n\nYour payment of NGN ${payment.amountNgn.toLocaleString('en-NG')} is confirmed. Your ${application.bookmaker} subscription is active until ${new Date(bookmakerExpiresAt).toISOString()}.\n\nSign in at ${req.app.locals.config.appOrigin} with your existing BETGO password. Your other subscriptions are unchanged.` });
+      await writeAudit(db, { action: 'payment.activate_subscription', requestId: req.requestId, details: { applicationId: application._id.toString(), userId: user._id.toString(), bookmaker: application.bookmaker, amountNgn: payment.amountNgn, existingAccount: true } });
+      return res.json({ received: true, activated: true, existingAccount: true });
+    }
     const temporaryPassword = randomBytes(18).toString('base64url');
     subscriptionExpiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
     const passwordHash = await argon2.hash(temporaryPassword, { type: argon2.argon2id });
-    const userResult = await db.collection('users').insertOne({ email: application.email, emailNormalized, fullName: application.fullName, passwordHash, role: 'member', bookmaker: application.bookmaker, createdAt: now, disabledAt: null, authVersion: 1, subscriptionStartedAt: now, subscriptionExpiresAt, mustChangePassword: true, temporaryPasswordIssuedAt: now, applicationId: application._id });
-    await db.collection('payments').updateOne({ _id: payment._id, status: 'pending' }, { $set: { status: 'paid', paidAt: now, flutterwaveTransactionId: verified.id, updatedAt: now, userId: userResult.insertedId } });
+    const userResult = await db.collection('users').insertOne({ email: application.email, emailNormalized, fullName: application.fullName, passwordHash, role: 'member', bookmaker: application.bookmaker, createdAt: now, disabledAt: null, authVersion: 1, subscriptionStartedAt: now, subscriptionExpiresAt, subscriptions: [{ bookmaker: application.bookmaker, startedAt: now, expiresAt: subscriptionExpiresAt }], appliedPaymentRefs: [payment.reference], mustChangePassword: true, temporaryPasswordIssuedAt: now, applicationId: application._id });
+    await db.collection('payments').updateOne({ _id: payment._id, status: 'pending' }, { $set: { status: 'paid', paidAt: now, flutterwaveTransactionId: verified.id, updatedAt: now, userId: userResult.insertedId, createdAccount: true } });
     await db.collection('applications').updateOne({ _id: application._id, status: 'approved_awaiting_payment' }, { $set: { status: 'active', paidAt: now, subscriptionExpiresAt, userId: userResult.insertedId, updatedAt: now } });
     await sendEmail(req.app.locals.config, { to: application.email, subject: 'BETGO payment confirmed — temporary login', text: `Hello ${application.fullName},\n\nYour payment of NGN ${payment.amountNgn.toLocaleString('en-NG')} is confirmed. Your ${application.bookmaker} subscription is active until ${subscriptionExpiresAt.toISOString()}.\n\nUsername: ${application.email}\nTemporary password: ${temporaryPassword}\n\nSign in at ${req.app.locals.config.appOrigin}. Change this temporary password immediately and do not share it. Your subscription expires 30 days after payment confirmation.` });
     await writeAudit(db, { action: 'payment.activate_subscription', requestId: req.requestId, details: { applicationId: application._id.toString(), userId: userResult.insertedId.toString(), amountNgn: payment.amountNgn } });
@@ -391,7 +437,7 @@ app.post('/api/me/password', csrfProtection, requireAuthLazy, async (req, res, n
 
 app.get('/api/me', requireAuthLazy, (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
-  res.json({ user: { id: req.user._id.toString(), email: req.user.email, fullName: req.user.fullName || '', role: req.user.role, bookmaker: req.user.bookmaker || null, mustChangePassword: req.user.mustChangePassword === true, subscriptionStartedAt: req.user.subscriptionStartedAt || null, subscriptionExpiresAt: req.user.subscriptionExpiresAt || null } });
+  res.json({ user: { id: req.user._id.toString(), email: req.user.email, fullName: req.user.fullName || '', role: req.user.role, bookmaker: allowedBookmakers(req.user)[0] || req.user.bookmaker || null, bookmakers: allowedBookmakers(req.user), subscriptions: publicSubscriptions(req.user), mustChangePassword: req.user.mustChangePassword === true, subscriptionStartedAt: req.user.subscriptionStartedAt || null, subscriptionExpiresAt: latestExpiry(req.user) || req.user.subscriptionExpiresAt || null } });
 });
 
 app.get('/api/admin/operations', requireAuthLazy, requireOwner, async (req, res) => {
@@ -457,7 +503,7 @@ app.get('/api/admin/status', requireAuthLazy, requireOwner, async (req, res) => 
 
 app.get('/api/accounts', requireAuthLazy, async (req, res) => {
   const accountFilter = { ownerUserId: req.user._id };
-  if (req.user.role !== 'owner' && req.user.bookmaker) accountFilter.platform = req.user.bookmaker;
+  if (req.user.role !== 'owner') accountFilter.platform = { $in: allowedBookmakers(req.user) };
   const accounts = await req.app.locals.db.collection('bettingAccounts')
     .find(accountFilter)
     .sort({ createdAt: -1 }).limit(200).toArray();
@@ -469,8 +515,8 @@ app.post('/api/accounts', csrfProtection, requireAuthLazy, async (req, res, next
   try {
     const parsed = accountCreateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Provide a valid display name, supported platform and optional notes.' } });
-    if (req.user.role !== 'owner' && parsed.data.platform !== req.user.bookmaker) {
-      return res.status(403).json({ error: { code: 'BOOKMAKER_NOT_IN_SUBSCRIPTION', message: 'Your subscription only includes the bookmaker selected when you applied.' } });
+    if (!canUseBookmaker(req.user, parsed.data.platform)) {
+      return res.status(403).json({ error: { code: 'BOOKMAKER_NOT_IN_SUBSCRIPTION', message: 'Your active subscriptions do not include this bookmaker.' } });
     }
     const now = new Date();
     const account = {
@@ -517,7 +563,7 @@ app.patch('/api/accounts/:accountId', csrfProtection, requireAuthLazy, async (re
       return res.status(409).json({ error: { code: 'INTEGRATION_NOT_AUTHORIZED', message: 'This account cannot be enabled until an approved integration is verified.' } });
     }
     const updateFilter = { _id: new ObjectId(req.params.accountId), ownerUserId: req.user._id };
-    if (req.user.role !== 'owner' && req.user.bookmaker) updateFilter.platform = req.user.bookmaker;
+    if (req.user.role !== 'owner') updateFilter.platform = { $in: allowedBookmakers(req.user) };
     const result = await req.app.locals.db.collection('bettingAccounts').findOneAndUpdate(
       updateFilter,
       { $set: update }, { returnDocument: 'after' }
@@ -608,7 +654,7 @@ app.post('/api/bet-instructions', csrfProtection, requireAuthLazy, async (req, r
     const accountId = new ObjectId(input.accountId);
     const account = await db.collection('bettingAccounts').findOne({ _id: accountId, ownerUserId: req.user._id });
     if (!account) return res.status(404).json({ error: { code: 'ACCOUNT_NOT_FOUND', message: 'Account record not found.' } });
-    if (req.user.role !== 'owner' && account.platform !== req.user.bookmaker) return res.status(403).json({ error: { code: 'BOOKMAKER_NOT_IN_SUBSCRIPTION', message: 'This account is outside your subscribed bookmaker.' } });
+    if (!canUseBookmaker(req.user, account.platform)) return res.status(403).json({ error: { code: 'BOOKMAKER_NOT_IN_SUBSCRIPTION', message: 'This account is outside your subscribed bookmaker.' } });
     const policies = db.collection('safetyPolicies');
     await policies.updateOne({ ownerUserId: req.user._id }, { $setOnInsert: { ...DEFAULT_SAFETY_POLICY, ownerUserId: req.user._id, openInstructionCount: 0, createdAt: new Date() } }, { upsert: true });
     await policies.updateOne({ ownerUserId: req.user._id, openInstructionCount: { $exists: false } }, { $set: { openInstructionCount: 0 } });
