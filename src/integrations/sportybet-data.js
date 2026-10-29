@@ -39,13 +39,13 @@ function normalizeEvent(event, tournament) {
       marketId: String(market.id ?? ''),
       marketName: String(market.desc || ''),
       specifier: market.specifier == null ? '' : String(market.specifier),
-      status: String(market.status || 'unknown'),
+      status: (market.status === 0 || market.status === '0' || market.status === 'active') ? 'active' : String(market.status ?? 'unknown'),
       rawStatus: market.status ?? null,
       outcomes: Array.isArray(market.outcomes) ? market.outcomes.map((outcome) => ({
         outcomeId: String(outcome.id ?? ''),
         name: String(outcome.desc || ''),
         odds: typeof outcome.odds === 'string' || typeof outcome.odds === 'number' ? String(outcome.odds) : null,
-        active: outcome.isActive === true,
+        active: outcome.isActive === true || outcome.isActive === 1 || outcome.isActive === '1',
         rawActive: outcome.isActive ?? null
       })) : []
     })) : []
