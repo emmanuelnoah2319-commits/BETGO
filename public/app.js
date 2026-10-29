@@ -1,7 +1,6 @@
 const $ = (selector) => document.querySelector(selector);
 $('#year').textContent = String(new Date().getFullYear());
 
-const nairaToKobo = (value) => Math.round(Number(value) * 100);
 const koboToNaira = (value) => (Number(value) / 100).toFixed(2);
 
 async function request(url, options = {}) {
@@ -108,12 +107,6 @@ async function loadIntegrations() {
     card.append(info, element('span', 'pill', item.status === 'available' ? 'Available' : 'Unavailable')); return card;
   }));
 }
-async function loadSafetyPolicy() {
-  const { policy } = await request('/api/safety-policy');
-  $('#max-stake').value = koboToNaira(policy.maxStakeMinor); $('#daily-stake').value = koboToNaira(policy.dailyStakeLimitMinor);
-  $('#daily-loss').value = koboToNaira(policy.dailyLossLimitMinor); $('#account-daily-stake').value = koboToNaira(policy.perAccountDailyStakeLimitMinor);
-  $('#max-open').value = String(policy.maxOpenInstructions);
-}
 async function loadDashboard() {
   try {
     const { user } = await request('/api/me'); $('#welcome').textContent = `Signed in as ${user.email}`;
@@ -139,9 +132,9 @@ async function loadDashboard() {
       if (allowed.length && !allowed.includes($('#account-platform').value)) $('#account-platform').value = allowed[0];
     } else { for (const option of $('#account-platform').options) option.disabled = false; }
     $('#password-change-panel').hidden = !user.mustChangePassword;
-    setupViews(user.mustChangePassword ? 'settings' : null);
+    setupViews(user.mustChangePassword ? 'overview' : null);
     if (user.mustChangePassword) return;
-    await Promise.all([loadAccounts(), loadIntegrations(), loadSafetyPolicy(), ...(user.role === 'owner' ? [loadApplications(), loadUsers(), loadOperations()] : [])]);
+    await Promise.all([loadAccounts(), loadIntegrations(), ...(user.role === 'owner' ? [loadApplications(), loadUsers(), loadOperations()] : [])]);
   } catch (error) {
     if (error.message === 'Login required' || error.message.includes('Session')) return showLogin();
     $('#dashboard-error').hidden = false; $('#dashboard-error').textContent = error.message;
@@ -159,42 +152,6 @@ $('#account-form').addEventListener('submit', async (event) => {
   catch (error) { showDashboardMessage(error.message, true); }
   finally { button.disabled = false; button.textContent = 'Add account record'; }
 });
-$('#load-sportybet-fixtures').addEventListener('click', async () => {
-  const button = $('#load-sportybet-fixtures'); const list = $('#sportybet-fixtures-list');
-  button.disabled = true; button.textContent = 'Loading…'; showMessage('sportybet-fixtures-message');
-  try {
-    const result = await request('/api/sportybet/fixtures?limit=30&timeline=168');
-    list.replaceChildren();
-    if (!result.fixtures.length) list.append(element('p', 'empty-state', 'SportyBet returned no upcoming fixtures for this window.'));
-    for (const fixture of result.fixtures) {
-      const card = element('article', 'fixture-card');
-      card.append(element('strong', '', `${fixture.homeTeam} vs ${fixture.awayTeam}`));
-      card.append(element('p', 'fixture-meta', `${fixture.tournament || 'Football'} · ${fixture.startTime ? new Date(fixture.startTime).toLocaleString() : 'Start time unavailable'}`));
-      const odds = element('div', 'fixture-odds');
-      const market = fixture.markets.find((item) => item.marketId === '1' && Array.isArray(item.outcomes));
-      if (market) {
-        for (const outcome of market.outcomes) {
-          const label = outcome.name || `Outcome ${outcome.outcomeId}`;
-          const price = Number(outcome.odds);
-          const hasPrice = Number.isFinite(price) && price > 1;
-          const priceText = hasPrice ? price.toFixed(2) : '—';
-          const row = element('div', 'fixture-outcome');
-          row.append(element('span', '', `${label}: ${priceText}`));
-          odds.append(row);
-        }
-      }
-      if (odds.childElementCount) card.append(odds);
-      else card.append(element('p', 'muted small', 'No 1X2 odds included in this response.'));
-      list.append(card);
-    }
-    const time = result.fetchedAt ? new Date(result.fetchedAt).toLocaleTimeString() : 'unknown time';
-    showMessage('sportybet-fixtures-message', `Received ${result.fixtures.length} fixtures · data timestamp ${time}${result.cached ? ' · cached response' : ''}. Odds are not guaranteed current.`);
-  } catch (error) {
-    list.replaceChildren(element('p', 'empty-state', 'No fixture data was loaded.'));
-    showMessage('sportybet-fixtures-message', error.message, true);
-  } finally { button.disabled = false; button.textContent = 'Load live fixtures'; }
-});
-
 $('#application-form').addEventListener('submit', async (event) => {
   event.preventDefault(); const button = $('#application-button'); button.disabled = true; button.textContent = 'Submitting…'; showMessage('application-message');
   try { const result = await mutate('/api/applications', 'POST', { fullName: $('#application-name').value.trim(), email: $('#application-email').value.trim(), bookmaker: $('#application-bookmaker').value }); $('#application-form').reset(); showMessage('application-message', result.message); }
@@ -216,12 +173,6 @@ $('#password-change-form').addEventListener('submit', async (event) => { event.p
 $('#logout-button').addEventListener('click', async () => {
   try { await mutate('/api/auth/logout', 'POST'); showLogin(); }
   catch (error) { $('#dashboard-error').hidden = false; $('#dashboard-error').textContent = error.message; }
-});
-$('#limits-form').addEventListener('submit', async (event) => {
-  event.preventDefault(); const button = $('#save-limits-button'); button.disabled = true; button.textContent = 'Saving…';
-  try { await mutate('/api/safety-policy', 'PATCH', { maxStakeMinor: nairaToKobo($('#max-stake').value), dailyStakeLimitMinor: nairaToKobo($('#daily-stake').value), dailyLossLimitMinor: nairaToKobo($('#daily-loss').value), perAccountDailyStakeLimitMinor: nairaToKobo($('#account-daily-stake').value), maxOpenInstructions: Number($('#max-open').value) }); showMessage('limits-message', 'Safety limits saved. Existing reservations are not automatically released.'); await loadSafetyPolicy(); }
-  catch (error) { showMessage('limits-message', error.message, true); }
-  finally { button.disabled = false; button.textContent = 'Save safety limits'; }
 });
 async function loadPlans() { try { const { plans } = await request('/api/plans'); const select = $('#application-bookmaker'); for (const option of select.options) { const plan = plans.find((item) => item.bookmaker === option.value); if (plan) option.textContent = `${plan.bookmaker} — ₦${Number(plan.priceNgn).toLocaleString('en-NG')} / ${plan.durationDays} days`; } } catch { /* Keep the visible defaults if the plans endpoint is temporarily unavailable. */ } }
 loadPlans();
@@ -329,7 +280,7 @@ $('#ops-form').addEventListener('submit', async (event) => {
 
 // Dashboard pages. Each section carries data-view; a tab is offered only when one of its sections is allowed for this role
 // (the role logic above uses the `hidden` attribute, so page switching uses a separate class and never overrides it).
-const VIEW_ORDER = ['overview', 'accounts', 'games', 'applications', 'members', 'operations', 'settings'];
+const VIEW_ORDER = ['overview', 'accounts', 'applications', 'members', 'operations'];
 let activeView = null;
 function viewSections(view) { return [...document.querySelectorAll(`#dashboard [data-view="${view}"]`)]; }
 function availableViews() { return VIEW_ORDER.filter((view) => viewSections(view).some((node) => !node.hidden)); }

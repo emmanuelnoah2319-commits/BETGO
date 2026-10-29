@@ -65,10 +65,10 @@
     <section id="dashboard" hidden>
       <div class="welcome-row"><div><p class="eyebrow">BETGO</p><h2>Dashboard</h2><p id="welcome"></p></div><button id="logout-button" class="button-secondary">Log out</button></div>
       <section id="member-subscription-panel" data-view="overview" class="panel dashboard-section" hidden><div class="panel-heading"><div><p class="eyebrow">YOUR ACCESS</p><h2>Subscription</h2></div><span class="pill">30-day plan</span></div><div class="metric-grid"><article class="metric"><span>Bookmaker bot</span><strong id="member-bookmaker">—</strong><small>Included in your subscription</small></article><article class="metric"><span>Access expires</span><strong id="member-expiry">—</strong><small id="member-days-left">Expiry is checked by the server</small></article></div><p class="muted small">You can register multiple account labels for your subscribed bookmaker. These records do not connect to or log in to the bookmaker yet.</p></section>
-      <section id="password-change-panel" data-view="settings" class="panel dashboard-section" hidden><div class="panel-heading"><div><p class="eyebrow">ACCOUNT SECURITY</p><h2>Change temporary password</h2></div></div><form id="password-change-form" class="account-form"><label for="temporary-password">Temporary password</label><input id="temporary-password" type="password" required autocomplete="current-password"><label for="new-password">New password (at least 12 characters)</label><input id="new-password" type="password" minlength="12" required autocomplete="new-password"><button type="submit">Change password</button></form><p id="password-change-message" role="status" hidden></p></section>
+      <section id="password-change-panel" data-view="overview" class="panel dashboard-section" hidden><div class="panel-heading"><div><p class="eyebrow">ACCOUNT SECURITY</p><h2>Change temporary password</h2></div></div><form id="password-change-form" class="account-form"><label for="temporary-password">Temporary password</label><input id="temporary-password" type="password" required autocomplete="current-password"><label for="new-password">New password (at least 12 characters)</label><input id="new-password" type="password" minlength="12" required autocomplete="new-password"><button type="submit">Change password</button></form><p id="password-change-message" role="status" hidden></p></section>
       <section id="admin-applications-section" data-view="applications" class="panel dashboard-section" hidden><div class="panel-heading"><div><p class="eyebrow">MEMBERSHIP ADMIN</p><h2>Applications</h2></div><button id="refresh-applications" class="button-secondary" type="button">Refresh</button></div><p class="muted small">Approval initializes a Flutterwave payment and sends the link. Rejection requires a reason. Email and payment credentials must be configured in Render.</p><p id="applications-message" role="status" hidden></p><div id="applications-list" class="account-list"></div></section>
       <section id="admin-users-section" data-view="members" class="panel dashboard-section" hidden><div class="panel-heading"><div><p class="eyebrow">MEMBERSHIP ADMIN</p><h2>Members</h2></div><button id="refresh-users" class="button-secondary" type="button">Refresh</button></div><label for="user-search">Search by email</label><input id="user-search" type="search" maxlength="100" placeholder="member@example.com" autocomplete="off"><p id="users-message" role="status" hidden></p><div id="users-list" class="account-list"></div></section>
-      <nav id="view-nav" class="section-nav" aria-label="Dashboard pages"><a href="#overview" data-tab="overview">Overview</a><a href="#accounts" data-tab="accounts">Accounts</a><a href="#games" data-tab="games">Games</a><a href="#applications" data-tab="applications">Applications</a><a href="#members" data-tab="members">Members</a><a href="#operations" data-tab="operations">Operations</a><a href="#settings" data-tab="settings">Settings</a></nav>
+      <nav id="view-nav" class="section-nav" aria-label="Dashboard pages"><a href="#overview" data-tab="overview">Overview</a><a href="#accounts" data-tab="accounts">Accounts</a><a href="#applications" data-tab="applications">Applications</a><a href="#members" data-tab="members">Members</a><a href="#operations" data-tab="operations">Operations</a></nav>
       <div class="metric-grid" data-view="overview">
         <article class="metric"><span>Account records</span><strong id="account-count">0</strong><small>Records only; not live connections</small></article>
         <article class="metric"><span>Automatic betting</span><strong class="off-value">OFF</strong><small>Disabled by default</small></article>
@@ -89,26 +89,9 @@
         <p id="account-message" role="status" hidden></p>
         <div id="account-list" class="account-list" aria-live="polite"><p class="empty-state">Loading account records…</p></div>
       </section>
-      <section id="limits-section" data-view="settings" class="panel dashboard-section">
-        <div class="panel-heading"><div><p class="eyebrow">FINANCIAL GUARDRAILS</p><h2>Stake and exposure limits</h2></div><span class="pill">Enforced by API</span></div>
-        <p class="muted">Amounts are in Nigerian naira (NGN). Limits are checked server-side before an instruction is recorded. Daily loss exposure conservatively includes unsettled reserved stakes. This does not submit bets.</p>
-        <form id="limits-form" class="account-form"><div class="form-grid">
-          <div><label for="max-stake">Maximum stake per instruction (₦)</label><input id="max-stake" type="number" min="1" step="0.01" required></div>
-          <div><label for="daily-stake">Global daily stake limit (₦)</label><input id="daily-stake" type="number" min="1" step="0.01" required></div>
-          <div><label for="daily-loss">Daily loss/exposure limit (₦)</label><input id="daily-loss" type="number" min="1" step="0.01" required></div>
-          <div><label for="account-daily-stake">Per-account daily stake limit (₦)</label><input id="account-daily-stake" type="number" min="1" step="0.01" required></div>
-          <div><label for="max-open">Maximum open instructions</label><input id="max-open" type="number" min="1" max="100" step="1" required></div>
-        </div><button id="save-limits-button" type="submit">Save safety limits</button></form><p id="limits-message" role="status" hidden></p>
-      </section>
       <section id="integrations-section" data-view="overview" class="panel dashboard-section">
         <div class="panel-heading"><div><p class="eyebrow">BOOKMAKER CONNECTIONS</p><h2>Integration status</h2></div><span class="pill">Not connected</span></div>
         <div id="integration-list" class="integration-list"></div>
-      </section>
-      <section id="games-section" data-view="games" class="panel dashboard-section">
-        <div class="panel-heading"><div><p class="eyebrow">SPORTYBET · READ-ONLY</p><h2>Games</h2></div><button id="load-sportybet-fixtures" type="button" class="button-secondary">Load live fixtures</button></div>
-        <p class="muted small">Uses SportyBet's undocumented public web endpoint. Fixtures and odds may change; this does not connect your betting account or place a wager.</p>
-        <p id="sportybet-fixtures-message" role="status" hidden></p>
-        <div id="sportybet-fixtures-list" class="account-list" aria-live="polite"><p class="empty-state">Tap “Load live fixtures” to request current data.</p></div>
       </section>
       <section id="operations-section" data-view="operations" class="panel emergency dashboard-section" hidden>
         <div class="ops-body">

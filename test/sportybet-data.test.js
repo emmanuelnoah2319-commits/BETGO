@@ -73,14 +73,12 @@ test('SportyBet adapter enforces provider query bounds', async () => {
 });
 
 
-test('SportyBet dashboard shows fixtures and odds read-only, with no instruction or slip UI', async () => {
+test('the dashboard has no live-fixtures, ticket, instruction or limits screens', async () => {
   const { readFile } = await import('node:fs/promises');
   const source = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.match(source, /\/api\/sportybet\/fixtures/);
-  assert.match(source, /Odds are not guaranteed current/);
-  assert.doesNotMatch(source, /fixture-use-selection|instruction-form|renderSlip/);
-  assert.doesNotMatch(html, /instructions-section|instruction-form|id="slip"/);
+  assert.doesNotMatch(source, /sportybet\/fixtures|fixture-use-selection|instruction-form|renderSlip|limits-form/);
+  assert.doesNotMatch(html, /games-section|limits-section|instructions-section|id="slip"|data-tab="settings"/);
 });
 
 test('getMarketsForEvents refreshes once and returns labelled markets per event', async () => {
