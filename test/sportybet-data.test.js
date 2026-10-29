@@ -73,14 +73,14 @@ test('SportyBet adapter enforces provider query bounds', async () => {
 });
 
 
-test('SportyBet dashboard hands a selected outcome into the review form with a timestamped odds snapshot', async () => {
+test('SportyBet dashboard shows fixtures and odds read-only, with no instruction or slip UI', async () => {
   const { readFile } = await import('node:fs/promises');
   const source = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
-  assert.match(source, /fixture-use-selection/);
-  assert.match(source, /SportyBet odds snapshot/);
-  assert.match(source, /outcome\.active !== true/);
-  assert.match(source, /instruction-selection/);
-  assert.match(source, /BETGO has not placed a bet/);
+  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  assert.match(source, /\/api\/sportybet\/fixtures/);
+  assert.match(source, /Odds are not guaranteed current/);
+  assert.doesNotMatch(source, /fixture-use-selection|instruction-form|renderSlip/);
+  assert.doesNotMatch(html, /instructions-section|instruction-form|id="slip"/);
 });
 
 test('getMarketsForEvents refreshes once and returns labelled markets per event', async () => {

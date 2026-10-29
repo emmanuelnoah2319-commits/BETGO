@@ -2,45 +2,7 @@ const $ = (selector) => document.querySelector(selector);
 $('#year').textContent = String(new Date().getFullYear());
 
 const nairaToKobo = (value) => Math.round(Number(value) * 100);
-let selectedOddsDecimal = null;
-let selectedOddsFetchedAt = null;
-let selectedProviderSelection = null;
-function updateTicketCalculation() {
-  const output = $('#ticket-calculation');
-  const odds = Number($('#instruction-odds').value);
-  const requestedStakeMinor = nairaToKobo($('#instruction-stake').value);
-  const capMinor = nairaToKobo($('#instruction-max-profit').value);
-  if (!Number.isFinite(odds) || odds <= 1 || !Number.isFinite(requestedStakeMinor) || requestedStakeMinor < 100 || !Number.isFinite(capMinor) || capMinor < 100) {
-    output.textContent = 'Choose an active SportyBet outcome and enter a valid stake and maximum net-profit cap.'; return;
-  }
-  const capStakeMinor = Math.floor(capMinor / (odds - 1));
-  const suggestedMinor = Math.min(requestedStakeMinor, capStakeMinor);
-  const profitMinor = Math.floor(suggestedMinor * (odds - 1));
-  output.textContent = `Odds ${odds.toFixed(2)} · suggested stake ₦${koboToNaira(suggestedMinor)} · potential net profit ₦${koboToNaira(profitMinor)} (cap ₦${koboToNaira(capMinor)}). Server re-applies the cap and safety limits.`;
-}
 const koboToNaira = (value) => (Number(value) / 100).toFixed(2);
-const MAX_SLIP_LEGS = 10;
-let slipLegs = [];
-function combinedSlipOdds() { return Number(slipLegs.reduce((product, leg) => product * leg.odds, 1).toFixed(4)); }
-function renderSlip() {
-  const box = $('#slip'); const list = $('#slip-legs'); list.replaceChildren(); box.hidden = slipLegs.length === 0;
-  for (const leg of slipLegs) {
-    const row = element('div', 'fixture-outcome'); row.append(element('span', '', `${leg.eventLabel} — ${leg.selectionLabel} @ ${leg.odds.toFixed(2)}`));
-    const remove = element('button', 'button-secondary', 'Remove'); remove.type = 'button';
-    remove.addEventListener('click', () => { slipLegs = slipLegs.filter((item) => item !== leg); if (slipLegs.length < 2) { $('#instruction-odds').value = ''; selectedOddsDecimal = null; } renderSlip(); });
-    row.append(remove); list.append(row);
-  }
-  if (slipLegs.length >= 2) {
-    const total = combinedSlipOdds();
-    $('#instruction-odds').value = total.toFixed(2);
-    $('#instruction-event').value = `Accumulator · ${slipLegs.length} selections`;
-    $('#instruction-selection').value = slipLegs.map((leg) => leg.selectionLabel).join(' + ').slice(0, 160);
-    selectedOddsDecimal = total; selectedProviderSelection = null;
-    if (total > 1000) showMessage('instruction-message', 'Combined odds are above 1000. Remove a selection.', true);
-  }
-  updateTicketCalculation();
-}
-$('#slip-clear').addEventListener('click', () => { slipLegs = []; $('#instruction-odds').value = ''; selectedOddsDecimal = null; renderSlip(); });
 
 async function request(url, options = {}) {
   const response = await fetch(url, { credentials: 'same-origin', ...options, headers: { ...(options.headers || {}) } });
@@ -133,10 +95,6 @@ function openEditForm(account, card) {
 }
 async function loadAccounts() {
   const { accounts } = await request('/api/accounts'); $('#account-count').textContent = String(accounts.length);
-  const selector = $('#instruction-account'); const selected = selector.value;
-  selector.replaceChildren(element('option', '', accounts.length ? 'Choose an account' : 'Add an account record first')); selector.options[0].value = '';
-  for (const account of accounts) { const option = element('option', '', `${account.displayName} — ${account.platform}`); option.value = account.id; selector.append(option); }
-  if (accounts.some((account) => account.id === selected)) selector.value = selected;
   const list = $('#account-list'); list.replaceChildren();
   if (!accounts.length) list.append(element('p', 'empty-state', 'No account records yet. Add a label for each bookmaker account you manage.'));
   else list.append(...accounts.map(renderAccount));
@@ -155,39 +113,6 @@ async function loadSafetyPolicy() {
   $('#max-stake').value = koboToNaira(policy.maxStakeMinor); $('#daily-stake').value = koboToNaira(policy.dailyStakeLimitMinor);
   $('#daily-loss').value = koboToNaira(policy.dailyLossLimitMinor); $('#account-daily-stake').value = koboToNaira(policy.perAccountDailyStakeLimitMinor);
   $('#max-open').value = String(policy.maxOpenInstructions);
-}
-function renderInstruction(item) {
-  const card = element('article', 'account-card'); const top = element('div', 'account-card-top'); const identity = element('div');
-  identity.append(element('strong', '', item.eventLabel), element('small', '', `${item.selectionLabel} · ${item.accountLabel}`));
-  top.append(identity, element('span', 'pill', item.status.replaceAll('_', ' ')));
-  card.append(top, element('p', 'account-notes', `Stake: ₦${koboToNaira(item.stakeMinor)} · ${item.platform}${item.oddsDecimal ? ` · odds ${Number(item.oddsDecimal).toFixed(2)} · potential net profit up to ₦${koboToNaira(Math.min(item.maxNetProfitMinor || 0, Math.floor(item.stakeMinor * (item.oddsDecimal - 1))))}` : ''}`));
-  if (item.ticketType === 'accumulator') for (const leg of item.legs) card.append(element('p', 'fixture-meta', `${leg.eventLabel} — ${leg.selectionLabel} @ ${Number(leg.oddsDecimal).toFixed(2)}`));
-  if (item.stakeAdjusted) card.append(element('p', 'muted small', 'Stake was reduced by the server to respect the maximum net-profit cap.')); 
-  if (item.notes) card.append(element('p', 'account-notes', item.notes));
-  card.append(element('p', 'muted small', 'Recorded for review only. No bookmaker submission has occurred.'));
-  const actions = element('div', 'instruction-actions');
-  if (item.status === 'awaiting_approval') {
-    const approve = element('button', '', 'Approve for next stage'); approve.type = 'button';
-    approve.addEventListener('click', async () => { approve.disabled = true; approve.textContent = 'Approving…'; try { await mutate(`/api/bet-instructions/${encodeURIComponent(item.id)}/approve`, 'POST'); showMessage('instruction-message', 'Approved for the next workflow stage. No bet was submitted.'); await loadInstructions(); } catch (error) { showMessage('instruction-message', error.message, true); approve.disabled = false; approve.textContent = 'Approve for next stage'; } });
-    actions.append(approve);
-  }
-  if (['awaiting_approval', 'approved_not_submitted'].includes(item.status)) {
-    const reject = element('button', 'button-secondary', 'Reject instruction'); reject.type = 'button';
-    reject.addEventListener('click', async () => { reject.disabled = true; reject.textContent = 'Rejecting…'; try { await mutate(`/api/bet-instructions/${encodeURIComponent(item.id)}/reject`, 'POST'); showMessage('instruction-message', 'Instruction rejected. Reserved exposure released.'); await loadInstructions(); } catch (error) { showMessage('instruction-message', error.message, true); reject.disabled = false; reject.textContent = 'Reject instruction'; } });
-    actions.append(reject);
-  }
-  if (['prepared', 'awaiting_approval', 'approved_not_submitted'].includes(item.status)) {
-    const cancel = element('button', 'button-secondary', 'Cancel instruction'); cancel.type = 'button';
-    cancel.addEventListener('click', async () => { cancel.disabled = true; cancel.textContent = 'Cancelling…'; try { await mutate(`/api/bet-instructions/${encodeURIComponent(item.id)}/cancel`, 'POST'); showMessage('instruction-message', 'Instruction cancelled. Reserved exposure released.'); await loadInstructions(); } catch (error) { showMessage('instruction-message', error.message, true); cancel.disabled = false; cancel.textContent = 'Cancel instruction'; } });
-    actions.append(cancel);
-  }
-  if (actions.childElementCount) card.append(actions);
-  return card;
-}
-async function loadInstructions() {
-  const { instructions } = await request('/api/bet-instructions'); const list = $('#instruction-list'); list.replaceChildren();
-  if (!instructions.length) list.append(element('p', 'empty-state', 'No instructions yet. Creating one records your plan; it does not place a bet.'));
-  else list.append(...instructions.map(renderInstruction));
 }
 async function loadDashboard() {
   try {
@@ -214,8 +139,9 @@ async function loadDashboard() {
       if (allowed.length && !allowed.includes($('#account-platform').value)) $('#account-platform').value = allowed[0];
     } else { for (const option of $('#account-platform').options) option.disabled = false; }
     $('#password-change-panel').hidden = !user.mustChangePassword;
+    setupViews(user.mustChangePassword ? 'settings' : null);
     if (user.mustChangePassword) return;
-    await Promise.all([loadAccounts(), loadIntegrations(), loadSafetyPolicy(), loadInstructions(), ...(user.role === 'owner' ? [loadApplications(), loadUsers(), loadOperations()] : [])]);
+    await Promise.all([loadAccounts(), loadIntegrations(), loadSafetyPolicy(), ...(user.role === 'owner' ? [loadApplications(), loadUsers(), loadOperations()] : [])]);
   } catch (error) {
     if (error.message === 'Login required' || error.message.includes('Session')) return showLogin();
     $('#dashboard-error').hidden = false; $('#dashboard-error').textContent = error.message;
@@ -254,45 +180,6 @@ $('#load-sportybet-fixtures').addEventListener('click', async () => {
           const priceText = hasPrice ? price.toFixed(2) : '—';
           const row = element('div', 'fixture-outcome');
           row.append(element('span', '', `${label}: ${priceText}`));
-          const use = element('button', 'button-secondary fixture-use-selection', 'Use selection');
-          use.type = 'button';
-          use.disabled = !hasPrice || outcome.active !== true || fixture.matchStatus !== 'not_started';
-          use.title = use.disabled ? 'This outcome is inactive or its price is unavailable.' : 'Copy this event and price snapshot into the review form.';
-          use.addEventListener('click', () => {
-            slipLegs = []; renderSlip();
-            const account = [...$('#instruction-account').options].find((option) => option.value && option.textContent.includes('SportyBet'));
-            if (account) $('#instruction-account').value = account.value;
-            else { showMessage('instruction-message', 'Add a SportyBet account record first; these odds can only be used with one.', true); return; }
-            $('#instruction-event').value = `${fixture.homeTeam} vs ${fixture.awayTeam}`.slice(0, 160);
-            selectedOddsDecimal = price; selectedOddsFetchedAt = result.fetchedAt || null; selectedProviderSelection = { eventId: fixture.eventId, marketId: market.marketId, outcomeId: outcome.outcomeId };
-            $('#instruction-odds').value = price.toFixed(2);
-            const marketName = market.marketName || '1X2';
-            const snapshotTime = result.fetchedAt ? new Date(result.fetchedAt).toLocaleString() : 'time unavailable';
-            $('#instruction-selection').value = `${marketName}: ${label} @ ${priceText} (snapshot)` .slice(0, 160);
-            const note = `SportyBet odds snapshot: ${priceText}; fetched ${snapshotTime}. Recheck odds before any manual bet. BETGO has not placed a bet.`;
-            $('#instruction-notes').value = note.slice(0, 300);
-            updateTicketCalculation();
-            $('#instruction-form').scrollIntoView({ behavior: 'smooth', block: 'center' });
-            $('#instruction-stake').focus();
-            showMessage('instruction-message', account ? 'Selection copied with a timestamped odds snapshot. Enter your stake and review before creating an instruction.' : 'Selection copied. Add a SportyBet account record, then choose it before creating the instruction.');
-          });
-          const add = element('button', 'button-secondary fixture-use-selection', 'Add to slip');
-          add.type = 'button'; add.disabled = use.disabled;
-          add.addEventListener('click', () => {
-            const account = [...$('#instruction-account').options].find((option) => option.value && option.textContent.includes('SportyBet'));
-            if (!account) { showMessage('instruction-message', 'Add a SportyBet account record first; these odds can only be used with one.', true); return; }
-            $('#instruction-account').value = account.value;
-            const leg = { eventId: fixture.eventId, marketId: market.marketId, outcomeId: outcome.outcomeId, odds: price, eventLabel: `${fixture.homeTeam} vs ${fixture.awayTeam}`.slice(0, 160), selectionLabel: `${market.marketName || '1X2'}: ${label}`.slice(0, 80) };
-            const existing = slipLegs.findIndex((item) => item.eventId === leg.eventId);
-            if (existing >= 0) slipLegs[existing] = leg;
-            else if (slipLegs.length >= MAX_SLIP_LEGS) { showMessage('instruction-message', `A slip can hold at most ${MAX_SLIP_LEGS} selections.`, true); return; }
-            else slipLegs.push(leg);
-            selectedProviderSelection = null; selectedOddsDecimal = null;
-            if (slipLegs.length < 2) { $('#instruction-odds').value = ''; $('#instruction-event').value = ''; $('#instruction-selection').value = ''; }
-            renderSlip();
-            showMessage('instruction-message', slipLegs.length < 2 ? 'Added. Pick one more match to build an accumulator, or clear the slip.' : `${slipLegs.length} selections in your slip. Enter a stake and review before creating an instruction.`);
-          });
-          row.append(use, add);
           odds.append(row);
         }
       }
@@ -335,14 +222,6 @@ $('#limits-form').addEventListener('submit', async (event) => {
   try { await mutate('/api/safety-policy', 'PATCH', { maxStakeMinor: nairaToKobo($('#max-stake').value), dailyStakeLimitMinor: nairaToKobo($('#daily-stake').value), dailyLossLimitMinor: nairaToKobo($('#daily-loss').value), perAccountDailyStakeLimitMinor: nairaToKobo($('#account-daily-stake').value), maxOpenInstructions: Number($('#max-open').value) }); showMessage('limits-message', 'Safety limits saved. Existing reservations are not automatically released.'); await loadSafetyPolicy(); }
   catch (error) { showMessage('limits-message', error.message, true); }
   finally { button.disabled = false; button.textContent = 'Save safety limits'; }
-});
-$('#instruction-stake').addEventListener('input', updateTicketCalculation);
-$('#instruction-max-profit').addEventListener('input', updateTicketCalculation);
-$('#instruction-form').addEventListener('submit', async (event) => {
-  event.preventDefault(); const button = $('#create-instruction-button'); button.disabled = true; button.textContent = 'Creating…';
-  try { const payload = { accountId: $('#instruction-account').value, stakeMinor: nairaToKobo($('#instruction-stake').value), eventLabel: $('#instruction-event').value.trim(), selectionLabel: $('#instruction-selection').value.trim(), notes: $('#instruction-notes').value.trim(), idempotencyKey: crypto.randomUUID() }; if (slipLegs.length === 1) { showMessage('instruction-message', 'Add a second selection to build an accumulator, or clear the slip.', true); return; } if (slipLegs.length >= 2) { delete payload.eventLabel; delete payload.selectionLabel; payload.legs = slipLegs.map((leg) => ({ eventId: leg.eventId, marketId: leg.marketId, outcomeId: leg.outcomeId, oddsDecimal: leg.odds })); payload.maxNetProfitMinor = nairaToKobo($('#instruction-max-profit').value); } else if (selectedOddsDecimal && selectedProviderSelection) { Object.assign(payload, selectedProviderSelection, { oddsDecimal: selectedOddsDecimal, maxNetProfitMinor: nairaToKobo($('#instruction-max-profit').value) }); } const result = await mutate('/api/bet-instructions', 'POST', payload); $('#instruction-form').reset(); $('#instruction-odds').value = ''; selectedOddsDecimal = null; selectedOddsFetchedAt = null; selectedProviderSelection = null; slipLegs = []; renderSlip(); const item = result?.instruction; showMessage('instruction-message', item?.stakeAdjusted ? `Instruction recorded. Server reduced the stake to ₦${koboToNaira(item.stakeMinor)} to respect your net-profit cap. No bet was submitted.` : 'Instruction created for review. No bet was submitted.'); await loadInstructions(); }
-  catch (error) { showMessage('instruction-message', error.message, true); }
-  finally { button.disabled = false; button.textContent = 'Create review instruction'; }
 });
 async function loadPlans() { try { const { plans } = await request('/api/plans'); const select = $('#application-bookmaker'); for (const option of select.options) { const plan = plans.find((item) => item.bookmaker === option.value); if (plan) option.textContent = `${plan.bookmaker} — ₦${Number(plan.priceNgn).toLocaleString('en-NG')} / ${plan.durationDays} days`; } } catch { /* Keep the visible defaults if the plans endpoint is temporarily unavailable. */ } }
 loadPlans();
@@ -447,3 +326,27 @@ $('#ops-form').addEventListener('submit', async (event) => {
   } catch (error) { showMessage('ops-message', error.message, true); }
   await loadOperations();
 });
+
+// Dashboard pages. Each section carries data-view; a tab is offered only when one of its sections is allowed for this role
+// (the role logic above uses the `hidden` attribute, so page switching uses a separate class and never overrides it).
+const VIEW_ORDER = ['overview', 'accounts', 'games', 'applications', 'members', 'operations', 'settings'];
+let activeView = null;
+function viewSections(view) { return [...document.querySelectorAll(`#dashboard [data-view="${view}"]`)]; }
+function availableViews() { return VIEW_ORDER.filter((view) => viewSections(view).some((node) => !node.hidden)); }
+function showView(view) {
+  const views = availableViews();
+  activeView = views.includes(view) ? view : views[0];
+  for (const name of VIEW_ORDER) for (const node of viewSections(name)) node.classList.toggle('view-off', name !== activeView);
+  for (const tab of document.querySelectorAll('#view-nav [data-tab]')) {
+    tab.hidden = !views.includes(tab.dataset.tab);
+    const current = tab.dataset.tab === activeView; tab.classList.toggle('active', current);
+    if (current) tab.setAttribute('aria-current', 'page'); else tab.removeAttribute('aria-current');
+  }
+}
+function setupViews(forceView) {
+  const wanted = forceView || window.location.hash.slice(1);
+  showView(wanted);
+  if (window.location.hash.slice(1) !== activeView) history.replaceState(null, '', `#${activeView}`);
+  window.scrollTo({ top: 0 });
+}
+window.addEventListener('hashchange', () => { if (!$('#dashboard').hidden) { showView(window.location.hash.slice(1)); window.scrollTo({ top: 0 }); } });

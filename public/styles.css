@@ -80,3 +80,6 @@ textarea { min-height: 90px; }
 .fixture-outcome { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; padding: 0.45rem 0; }
 .fixture-use-selection { padding: 0.4rem 0.65rem; font-size: 0.85rem; }
 .fixture-use-selection:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.view-off { display: none !important; }
+.section-nav a.active { background: var(--accent-dark); color: var(--accent); }
