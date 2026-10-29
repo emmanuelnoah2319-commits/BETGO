@@ -62,6 +62,24 @@ function renderAccount(account) {
     finally { check.disabled = false; await loadAccounts(); }
   });
   actions.append(check);
+  if (account.platform === 'SportyBet') {
+    const sessionButton = element('button', 'button-secondary', account.hasExecutionSession ? 'Replace SportyBet session' : 'Import SportyBet session');
+    sessionButton.type = 'button';
+    sessionButton.addEventListener('click', () => openSportyBetSessionForm(account, card));
+    actions.append(sessionButton);
+    if (account.hasExecutionSession) {
+      const removeSession = element('button', 'button-secondary', 'Remove session'); removeSession.type = 'button';
+      removeSession.addEventListener('click', async () => {
+        if (!window.confirm(`Remove the stored SportyBet session for ${account.displayName}?`)) return;
+        removeSession.disabled = true;
+        try { await mutate(`/api/accounts/${account.id}/sportybet-session`, 'DELETE'); showDashboardMessage('SportyBet session removed.'); }
+        catch (error) { showDashboardMessage(error.message, true); }
+        finally { await loadAccounts(); }
+      });
+      actions.append(removeSession);
+      details.append(element('span', '', 'Session stored encrypted; not verified until a wager attempt.'));
+    }
+  }
   const remove = element('button', 'button-secondary', 'Remove'); remove.type = 'button';
   remove.addEventListener('click', async () => {
     if (!window.confirm(`Remove ${account.displayName}? This cannot be undone.`)) return;
@@ -83,6 +101,28 @@ function renderAccount(account) {
   }
   card.append(details, actions); return card;
 }
+function openSportyBetSessionForm(account, card) {
+  const existing = card.querySelector('.session-import-form'); if (existing) { existing.remove(); return; }
+  const form = element('form', 'inline-edit-form session-import-form');
+  const label = element('label', '', 'Full SportyBet Cookie request header');
+  const cookie = element('textarea'); cookie.name = 'cookie'; cookie.required = true; cookie.rows = 3; cookie.maxLength = 12000; cookie.autocomplete = 'off'; cookie.spellcheck = false;
+  label.append(cookie);
+  const hint = element('p', 'field-hint', 'Paste the complete Cookie header from your own logged-in SportyBet session. BETGO encrypts it at rest. Never paste your password, PIN or OTP.');
+  const error = element('p', 'form-error'); error.hidden = true; error.setAttribute('role', 'alert');
+  const save = element('button', '', 'Save encrypted session'); save.type = 'submit';
+  const cancel = element('button', 'button-secondary', 'Cancel'); cancel.type = 'button'; cancel.addEventListener('click', () => form.remove());
+  const controls = element('div', 'form-actions'); controls.append(save, cancel); form.append(label, hint, error, controls);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault(); save.disabled = true; save.textContent = 'Encrypting…'; error.hidden = true;
+    try {
+      const result = await mutate(`/api/accounts/${account.id}/sportybet-session`, 'POST', { cookie: cookie.value.trim() });
+      cookie.value = ''; form.remove(); showDashboardMessage(result.message); await loadAccounts();
+    } catch (e) { error.textContent = e.message; error.hidden = false; }
+    finally { save.disabled = false; save.textContent = 'Save encrypted session'; }
+  });
+  card.append(form); cookie.focus();
+}
+
 function openEditForm(account, card) {
   const existing = card.querySelector('.inline-edit-form'); if (existing) { existing.remove(); return; }
   const form = element('form', 'inline-edit-form');
@@ -109,6 +149,51 @@ async function loadAccounts() {
   if (!accounts.length) list.append(element('p', 'empty-state', 'No account records yet. Add a label for each bookmaker account you manage.'));
   else list.append(...accounts.map(renderAccount));
 }
+async function loadBetInstructions() {
+  const section = $('#instructions-section'); if (!section) return;
+  const { instructions } = await request('/api/bet-instructions');
+  const list = $('#instructions-list'); list.replaceChildren();
+  if (!instructions.length) { list.append(element('p', 'empty-state', 'Saved instructions will appear here for approval and, when enabled, explicit wager confirmation.')); return; }
+  for (const item of instructions) {
+    const card = element('article', 'account-card');
+    card.append(element('strong', '', item.eventLabel), element('p', '', item.selectionLabel));
+    card.append(element('p', 'fixture-meta', `${item.accountLabel} · ₦${(item.stakeMinor / 100).toFixed(2)} · odds ${Number(item.oddsDecimal || 0).toFixed(2)} · ${item.status}${item.wagerExecutionStatus ? ` · wager: ${item.wagerExecutionStatus}` : ''}`));
+    for (const result of item.wagerResults || []) card.append(element('p', 'fixture-meta', `${result.accountLabel}: ${result.status}${result.providerReference ? ` · reference ${result.providerReference}` : ''}`));
+    if (item.ticketType === 'accumulator') card.append(element('p', 'fixture-meta', 'Hector connector currently does not submit accumulators.'));
+    const actions = element('div', 'account-actions');
+    if (item.status === 'awaiting_approval') {
+      const approve = element('button', 'button-secondary', 'Approve instruction'); approve.type = 'button';
+      approve.addEventListener('click', async () => {
+        approve.disabled = true;
+        try { await mutate(`/api/bet-instructions/${item.id}/approve`, 'POST', {}); showDashboardMessage('Instruction approved. No wager has been sent yet.'); await loadBetInstructions(); }
+        catch (error) { showDashboardMessage(error.message, true); approve.disabled = false; }
+      }); actions.append(approve);
+    }
+    if (item.status === 'approved_not_submitted' && !item.wagerExecutionStatus) {
+      const submit = element('button', '', 'Confirm wager on all saved SportyBet sessions'); submit.type = 'button';
+      submit.addEventListener('click', async () => {
+        const sessionAccounts = sportyAccounts.filter((account) => account.hasExecutionSession);
+        const expectedTotalMinor = item.stakeMinor * sessionAccounts.length;
+        if (!sessionAccounts.length) { showDashboardMessage('Import a SportyBet session on at least one account first.', true); return; }
+        if (!window.confirm(`This can submit one real-money wager on ${sessionAccounts.length} saved SportyBet session(s), at ₦${(item.stakeMinor / 100).toFixed(2)} each (maximum total ₦${(expectedTotalMinor / 100).toFixed(2)}). Continue?`)) return;
+        const capText = window.prompt('Enter the MAXIMUM TOTAL stake in NGN across all imported SportyBet accounts (e.g. 1000.00):');
+        if (capText === null) return;
+        const cap = Number(capText.trim());
+        if (!Number.isFinite(cap) || cap <= 0 || !Number.isSafeInteger(Math.round(cap * 100))) { showDashboardMessage('Enter a valid maximum total stake in naira.', true); return; }
+        const phrase = window.prompt('Final confirmation. Type exactly: PLACE THIS WAGER ON ALL SAVED SPORTYBET SESSIONS');
+        if (phrase !== 'PLACE THIS WAGER ON ALL SAVED SPORTYBET SESSIONS') { showDashboardMessage('Confirmation did not match. No wager was submitted.', true); return; }
+        submit.disabled = true; submit.textContent = 'Submitting once per account…';
+        try {
+          const result = await mutate(`/api/bet-instructions/${item.id}/confirm-wager`, 'POST', { confirmation: phrase, maxTotalStakeMinor: Math.round(cap * 100) });
+          showDashboardMessage(`Wager attempts finished: ${result.aggregate}. ${result.results.map((row) => `${row.accountLabel}: ${row.status}`).join(' · ')}. Unknown results must be reconciled; do not retry.` , result.aggregate !== 'accepted_all');
+          await loadBetInstructions(); await loadAccounts();
+        } catch (error) { showDashboardMessage(error.message, true); submit.disabled = false; submit.textContent = 'Confirm wager on all saved SportyBet sessions'; }
+      }); actions.append(submit);
+    }
+    card.append(actions); list.append(card);
+  }
+}
+
 async function loadIntegrations() {
   const { integrations } = await request('/api/integrations');
   $('#integration-count').textContent = `${integrations.filter((item) => item.status === 'available').length} / ${integrations.length}`;
@@ -145,7 +230,7 @@ async function loadDashboard() {
     $('#password-change-panel').hidden = !user.mustChangePassword;
     setupViews(user.mustChangePassword ? 'overview' : null);
     if (user.mustChangePassword) return;
-    await Promise.all([loadAccounts(), loadIntegrations(), ...(user.role === 'owner' ? [loadApplications(), loadUsers(), loadOperations()] : [])]);
+    await Promise.all([loadAccounts(), loadIntegrations(), loadBetInstructions(), ...(user.role === 'owner' ? [loadApplications(), loadUsers(), loadOperations()] : [])]);
   } catch (error) {
     if (error.message === 'Login required' || error.message.includes('Session')) return showLogin();
     $('#dashboard-error').hidden = false; $('#dashboard-error').textContent = error.message;
@@ -179,6 +264,7 @@ async function loadApplications() {
   }
 }
 $('#refresh-applications').addEventListener('click', async () => { try { await loadApplications(); showMessage('applications-message', 'Applications refreshed.'); } catch (error) { showMessage('applications-message', error.message, true); } });
+$('#refresh-instructions').addEventListener('click', async () => { try { await loadBetInstructions(); showDashboardMessage('Saved instructions refreshed.'); } catch (error) { showDashboardMessage(error.message, true); } });
 $('#password-change-form').addEventListener('submit', async (event) => { event.preventDefault(); try { const result = await mutate('/api/me/password', 'POST', { currentPassword: $('#temporary-password').value, newPassword: $('#new-password').value }); showMessage('password-change-message', result.message); await mutate('/api/auth/logout', 'POST'); showLogin('Password changed. Sign in with your new password.'); } catch (error) { showMessage('password-change-message', error.message, true); } });
 
 $('#logout-button').addEventListener('click', async () => {
@@ -622,6 +708,7 @@ $('#ticket-form').addEventListener('submit', async (event) => {
     const reduced = saved.stakeAdjusted ? ` Your stake was lowered to ${minorToNaira(saved.stakeMinor)} at odds ${Number(saved.oddsDecimal).toFixed(2)} to respect your max profit.` : ` Stake ${minorToNaira(saved.stakeMinor)} at odds ${Number(saved.oddsDecimal).toFixed(2)}.`;
     ticket.legs = []; ticket.submitKey = null; ticket.submitPayload = null; $('#ticket-stake').value = ''; $('#ticket-max-profit').value = '';
     renderMarkets(); renderTicket();
+    loadBetInstructions().catch((error) => showDashboardMessage(error.message, true));
     showMessage('ticket-message', `${result.replayed ? 'This ticket was already saved.' : 'Ticket saved and waiting for your approval.'}${reduced} Nothing was sent to SportyBet.`);
   } catch (error) {
     if (['ODDS_CHANGED', 'OUTCOME_UNAVAILABLE', 'EVENT_UNAVAILABLE'].includes(error.code)) {

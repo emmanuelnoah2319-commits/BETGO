@@ -3,6 +3,8 @@ import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import { randomUUID, timingSafeEqual, randomBytes } from 'node:crypto';
+import os from 'node:os';
+import path from 'node:path';
 import argon2 from 'argon2';
 import { z } from 'zod';
 import { ObjectId } from 'mongodb';
@@ -11,6 +13,8 @@ import { login, revokeSession } from './services/auth.js';
 import { requireAuth, requireOwner } from './middleware/auth.js';
 import { writeAudit } from './services/audit.js';
 import { getBookmakerConnector, listBookmakerIntegrations } from './integrations/bookmakers.js';
+import { runHectorSingleBet } from './integrations/hector-runner.js';
+import { decryptSecret, encryptSecret } from './services/secret-vault.js';
 import { applyConnectorCheck, connectionUpdate } from './services/account-connection.js';
 import { isBettableStatus, sportyBetDataClient } from './integrations/sportybet-data.js';
 import { footballComDataClient } from './integrations/footballcom-data.js';
@@ -33,6 +37,11 @@ const accountCreateSchema = z.object({
   displayName: z.string().trim().min(1).max(60),
   platform: z.enum(supportedPlatforms),
   notes: z.string().trim().max(300).optional().default('')
+}).strict();
+const sessionImportSchema = z.object({ cookie: z.string().min(20).max(12000).refine((value) => !/[\r\n]/.test(value), 'Cookie must be a single line.') }).strict();
+const wagerFanoutSchema = z.object({
+  confirmation: z.literal('PLACE THIS WAGER ON ALL SAVED SPORTYBET SESSIONS'),
+  maxTotalStakeMinor: z.number().int().min(100).max(1_000_000_000)
 }).strict();
 const accountUpdateSchema = z.object({
   displayName: z.string().trim().min(1).max(60).optional(),
@@ -577,7 +586,7 @@ app.get('/api/admin/status', requireAuthLazy, requireOwner, async (req, res) => 
       enabled: false,
       reason: 'No official API or partner authorization has been verified.'
     },
-    automaticBetting: false
+    automaticBetting: req.app.locals.config.wagerExecutionEnabled === true
   });
 });
 
@@ -644,6 +653,39 @@ async function loadOwnAccount(req) {
   return { account };
 }
 
+// Store imported SportyBet browser sessions encrypted at rest. Importing a cookie does not mark the
+// account connected or verified; the execution response is independently classified by Hector.
+app.post('/api/accounts/:accountId/sportybet-session', connectionCheckLimiter, csrfProtection, requireAuthLazy, async (req, res, next) => {
+  try {
+    const { account, error } = await loadOwnAccount(req);
+    if (error) return res.status(error.status).json({ error: { code: error.code, message: error.message } });
+    if (account.platform !== 'SportyBet') return res.status(400).json({ error: { code: 'UNSUPPORTED_SESSION_PLATFORM', message: 'Only SportyBet sessions are supported by this connector.' } });
+    if (!req.app.locals.config.wagerExecutionEnabled) return res.status(503).json({ error: { code: 'WAGER_EXECUTION_DISABLED', message: 'Wager execution is disabled by server configuration.' } });
+    const parsed = sessionImportSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: { code: 'INVALID_SESSION', message: 'Provide the full single-line SportyBet Cookie header.' } });
+    const encrypted = encryptSecret(parsed.data.cookie, req.app.locals.config.sessionSecret);
+    const now = new Date();
+    await req.app.locals.db.collection('bettingAccounts').updateOne(
+      { _id: account._id, ownerUserId: req.user._id },
+      { $set: { hectorSession: encrypted, hasExecutionSession: true, sessionImportedAt: now, updatedAt: now } }
+    );
+    await writeAudit(req.app.locals.db, { actorUserId: req.user._id, action: 'account.sportybet_session_import', requestId: req.requestId, details: { accountId: account._id.toString(), platform: account.platform } });
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).json({ saved: true, verified: false, message: 'Session encrypted and saved. It has not been verified yet.' });
+  } catch (error) { next(error); }
+});
+
+app.delete('/api/accounts/:accountId/sportybet-session', csrfProtection, requireAuthLazy, async (req, res, next) => {
+  try {
+    const { account, error } = await loadOwnAccount(req);
+    if (error) return res.status(error.status).json({ error: { code: error.code, message: error.message } });
+    await req.app.locals.db.collection('bettingAccounts').updateOne({ _id: account._id, ownerUserId: req.user._id }, { $unset: { hectorSession: '', hasExecutionSession: '', sessionImportedAt: '' }, $set: { updatedAt: new Date() } });
+    await writeAudit(req.app.locals.db, { actorUserId: req.user._id, action: 'account.sportybet_session_remove', requestId: req.requestId, details: { accountId: account._id.toString(), platform: account.platform } });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ removed: true });
+  } catch (error) { next(error); }
+});
+
 // Each account carries its own connection state. "connected" can only come from a connector's own verification;
 // until a verified, permitted connector exists for the bookmaker, a check just records that it could not run.
 app.post('/api/accounts/:accountId/connection/check', connectionCheckLimiter, csrfProtection, requireAuthLazy, async (req, res, next) => {
@@ -672,7 +714,7 @@ app.post('/api/accounts/:accountId/connection/disconnect', csrfProtection, requi
     let update;
     try { update = connectionUpdate(account, 'disconnected', { reason: 'Disconnected by you.' }); }
     catch (transitionError) { if (transitionError.code === 'INVALID_CONNECTION_TRANSITION') return res.status(409).json({ error: { code: 'INVALID_CONNECTION_TRANSITION', message: 'This account is not connected.' } }); throw transitionError; }
-    const updated = await req.app.locals.db.collection('bettingAccounts').findOneAndUpdate({ _id: account._id, ownerUserId: req.user._id }, { $set: update.set }, { returnDocument: 'after' });
+    const updated = await req.app.locals.db.collection('bettingAccounts').findOneAndUpdate({ _id: account._id, ownerUserId: req.user._id }, { $set: update.set, $unset: { hectorSession: '', hasExecutionSession: '', sessionImportedAt: '' } }, { returnDocument: 'after' });
     await writeAudit(req.app.locals.db, { actorUserId: req.user._id, action: 'account.disconnect', requestId: req.requestId, details: { accountId: account._id.toString(), platform: account.platform, from: update.from } });
     res.json({ account: publicAccount(updated) });
   } catch (error) { next(error); }
@@ -744,6 +786,7 @@ function publicAccount(account) {
     currency: account.currency ?? null,
     enabledForNewActivity: account.enabledForNewActivity === true,
     integrationAuthorized: account.integrationAuthorized === true,
+    hasExecutionSession: account.hasExecutionSession === true && Boolean(account.hectorSession),
     createdAt: account.createdAt,
     updatedAt: account.updatedAt
   };
@@ -786,9 +829,17 @@ function publicSafetyPolicy(saved) {
 }
 
 app.get('/api/bet-instructions', requireAuthLazy, async (req, res) => {
-  const instructions = await req.app.locals.db.collection('betInstructions').find({ ownerUserId: req.user._id }).sort({ createdAt: -1 }).limit(100).toArray();
+  const db = req.app.locals.db;
+  const instructions = await db.collection('betInstructions').find({ ownerUserId: req.user._id }).sort({ createdAt: -1 }).limit(100).toArray();
+  const attempts = instructions.length ? await db.collection('hectorWagerAttempts').find({ ownerUserId: req.user._id, instructionId: { $in: instructions.map((item) => item._id) } }).sort({ createdAt: 1 }).toArray() : [];
+  const byInstruction = new Map();
+  for (const attempt of attempts) {
+    const key = attempt.instructionId.toString();
+    if (!byInstruction.has(key)) byInstruction.set(key, []);
+    byInstruction.get(key).push({ accountId: attempt.accountId.toString(), accountLabel: attempt.accountLabel, status: attempt.status, stakeMinor: attempt.stakeMinor, oddsDecimal: attempt.oddsDecimal, providerReference: attempt.providerReference || null, createdAt: attempt.createdAt, updatedAt: attempt.updatedAt });
+  }
   res.setHeader('Cache-Control', 'no-store');
-  res.json({ instructions: instructions.map(publicInstruction) });
+  res.json({ instructions: instructions.map((item) => ({ ...publicInstruction(item), wagerResults: byInstruction.get(item._id.toString()) || [] })) });
 });
 
 app.post('/api/bet-instructions', csrfProtection, requireAuthLazy, async (req, res, next) => {
@@ -900,6 +951,85 @@ app.post('/api/bet-instructions/:instructionId/approve', csrfProtection, require
   } catch (error) { next(error); }
 });
 
+// Explicit, one-shot fan-out for a saved single-selection instruction. Hector currently supports
+// single selections only; accumulators are rejected rather than being split into unrelated wagers.
+app.post('/api/bet-instructions/:instructionId/confirm-wager', connectionCheckLimiter, csrfProtection, requireAuthLazy, async (req, res, next) => {
+  const db = req.app.locals.db;
+  const createdAttemptIds = [];
+  try {
+    if (!req.app.locals.config.wagerExecutionEnabled) return res.status(503).json({ error: { code: 'WAGER_EXECUTION_DISABLED', message: 'Wager execution is disabled by server configuration.' } });
+    if (!ObjectId.isValid(req.params.instructionId)) return res.status(400).json({ error: { code: 'INVALID_INSTRUCTION_ID', message: 'Instruction ID is invalid.' } });
+    const parsed = wagerFanoutSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: { code: 'CONFIRMATION_REQUIRED', message: 'Exact confirmation and a maximum total stake are required.' } });
+    if (!canUseBookmaker(req.user, 'SportyBet')) return res.status(403).json({ error: { code: 'BOOKMAKER_NOT_IN_SUBSCRIPTION', message: 'An active SportyBet subscription is required.' } });
+    const control = await getOperationalControl(db);
+    if (control.emergencyStop) return res.status(423).json({ error: { code: 'EMERGENCY_STOP_ENABLED', message: control.reason || 'Execution is stopped.' } });
+    const instruction = await db.collection('betInstructions').findOne({ _id: new ObjectId(req.params.instructionId), ownerUserId: req.user._id });
+    if (!instruction) return res.status(404).json({ error: { code: 'INSTRUCTION_NOT_FOUND', message: 'Bet instruction not found.' } });
+    if (instruction.status !== 'approved_not_submitted' || instruction.reservationActive !== true) return res.status(409).json({ error: { code: 'INSTRUCTION_NOT_APPROVED', message: 'Approve the instruction first; only approved, active instructions can be submitted.' } });
+    if (instruction.platform !== 'SportyBet' || instruction.ticketType === 'accumulator' || Array.isArray(instruction.legs) || !instruction.eventId || !instruction.marketId || !instruction.outcomeId || !Number.isFinite(instruction.oddsDecimal)) {
+      return res.status(422).json({ error: { code: 'HECTOR_SINGLE_SELECTION_ONLY', message: 'This Hector connector currently supports one SportyBet selection per wager, not accumulators.' } });
+    }
+    const accounts = await db.collection('bettingAccounts').find({ ownerUserId: req.user._id, platform: 'SportyBet', hasExecutionSession: true, hectorSession: { $exists: true } }).sort({ createdAt: 1 }).limit(50).toArray();
+    if (!accounts.length) return res.status(409).json({ error: { code: 'NO_IMPORTED_SESSIONS', message: 'Import a SportyBet session for at least one account first.' } });
+    const totalStakeMinor = instruction.stakeMinor * accounts.length;
+    if (!Number.isSafeInteger(totalStakeMinor) || totalStakeMinor > parsed.data.maxTotalStakeMinor) return res.status(409).json({ error: { code: 'TOTAL_STAKE_CAP_EXCEEDED', message: `This action would stake ₦${(totalStakeMinor / 100).toFixed(2)} across ${accounts.length} accounts, above the confirmed total cap.` } });
+    // Refresh market data before any wager attempt. If odds or availability changed, nothing is submitted.
+    const current = await sportyBetDataClient.getMarkets(instruction.eventId);
+    if (!isBettableStatus(current.matchStatus)) return res.status(409).json({ error: { code: 'EVENT_UNAVAILABLE', message: 'The match is no longer bettable; no wager was submitted.' } });
+    const market = current.markets.find((item) => item.marketId === instruction.marketId && (item.specifier || '') === (instruction.specifier || '') && item.status === 'active');
+    const outcome = market?.outcomes.find((item) => item.outcomeId === instruction.outcomeId && item.active === true);
+    const currentOdds = Number(outcome?.odds);
+    if (!Number.isFinite(currentOdds) || currentOdds <= 1) return res.status(409).json({ error: { code: 'OUTCOME_UNAVAILABLE', message: 'The selected outcome is no longer active; no wager was submitted.' } });
+    if (oddsDriftBlock({ submittedOdds: instruction.oddsDecimal, currentOdds, live: current.isLive })) return res.status(409).json({ error: { code: 'ODDS_CHANGED', message: `Odds changed from ${instruction.oddsDecimal.toFixed(2)} to ${currentOdds.toFixed(2)}; no wager was submitted.` } });
+    const now = new Date();
+    const attempts = accounts.map((account) => ({
+      _id: `hector:${instruction._id.toString()}:${account._id.toString()}`,
+      ownerUserId: req.user._id, instructionId: instruction._id, accountId: account._id,
+      accountLabel: account.displayName, platform: 'SportyBet', status: 'queued',
+      stakeMinor: instruction.stakeMinor, oddsDecimal: currentOdds, createdAt: now, updatedAt: now
+    }));
+    for (const attempt of attempts) {
+      try { await db.collection('hectorWagerAttempts').insertOne(attempt); createdAttemptIds.push(attempt._id); }
+      catch (error) {
+        if (error?.code === 11000) {
+          await db.collection('hectorWagerAttempts').deleteMany({ _id: { $in: createdAttemptIds }, status: 'queued' });
+          return res.status(409).json({ error: { code: 'WAGER_ALREADY_ATTEMPTED', message: 'At least one account already has an attempt for this instruction. No new wagers were submitted; reconcile existing attempts first.' } });
+        }
+        throw error;
+      }
+    }
+    const results = [];
+    for (const [index, account] of accounts.entries()) {
+      const attemptId = attempts[index]._id;
+      const claimed = await db.collection('hectorWagerAttempts').findOneAndUpdate({ _id: attemptId, status: 'queued' }, { $set: { status: 'submitting', startedAt: new Date(), updatedAt: new Date() } }, { returnDocument: 'after' });
+      if (!claimed) { results.push({ accountId: account._id.toString(), accountLabel: account.displayName, status: 'unknown' }); continue; }
+      let cookie;
+      try { cookie = decryptSecret(account.hectorSession, req.app.locals.config.sessionSecret); }
+      catch {
+        await db.collection('hectorWagerAttempts').updateOne({ _id: attemptId, status: 'submitting' }, { $set: { status: 'unknown', resultReason: 'session_decryption_failed', finishedAt: new Date(), updatedAt: new Date() } });
+        results.push({ accountId: account._id.toString(), accountLabel: account.displayName, status: 'unknown' }); continue;
+      }
+      const execution = await runHectorSingleBet({
+        binary: req.app.locals.config.hectorBin, cookie, instruction: { ...instruction, oddsDecimal: currentOdds }, accountId: account._id.toString(),
+        timeoutMs: req.app.locals.config.hectorTimeoutMs,
+        journalDir: req.app.locals.config.hectorJournalDir || path.join(os.homedir(), '.local', 'state', 'betgo', 'hector')
+      });
+      await db.collection('hectorWagerAttempts').updateOne({ _id: attemptId, status: 'submitting' }, { $set: { status: execution.status, providerReference: execution.providerReference, finishedAt: new Date(), updatedAt: new Date() } });
+      results.push({ accountId: account._id.toString(), accountLabel: account.displayName, status: execution.status, ...(execution.providerReference ? { providerReference: execution.providerReference } : {}) });
+    }
+    const statuses = results.map((result) => result.status);
+    const aggregate = statuses.every((status) => status === 'accepted') ? 'accepted_all' : statuses.every((status) => status === 'rejected') ? 'rejected_all' : statuses.some((status) => status === 'unknown' || status === 'submitting') ? 'partial_or_unknown' : 'mixed';
+    await db.collection('betInstructions').updateOne({ _id: instruction._id, ownerUserId: req.user._id }, { $set: { wagerExecutionStatus: aggregate, wagerExecutionAt: new Date(), updatedAt: new Date() } });
+    await writeAudit(db, { actorUserId: req.user._id, action: 'bet_instruction.hector_fanout', requestId: req.requestId, details: { instructionId: instruction._id.toString(), accountCount: accounts.length, totalStakeMinor, statuses: results.map((result) => result.status), aggregate } });
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).json({ instructionId: instruction._id.toString(), aggregate, totalStakeMinor, results, retryPolicy: 'No automatic retry. Unknown outcomes must be reconciled against SportyBet bet history and Hector journal.' });
+  } catch (error) {
+    if (createdAttemptIds.length) await db.collection('hectorWagerAttempts').deleteMany({ _id: { $in: createdAttemptIds }, status: 'queued' }).catch(() => {});
+    next(error);
+  }
+});
+
 app.post('/api/bet-instructions/:instructionId/cancel', csrfProtection, requireAuthLazy, async (req, res, next) => {
   try {
     if (!ObjectId.isValid(req.params.instructionId)) return res.status(400).json({ error: { code: 'INVALID_INSTRUCTION_ID', message: 'Instruction ID is invalid.' } });
@@ -936,7 +1066,7 @@ app.post('/api/admin/recover-reservations', csrfProtection, requireAuthLazy, req
 });
 
 function publicInstruction(instruction) {
-  return { id: instruction._id.toString(), accountId: instruction.accountId.toString(), accountLabel: instruction.accountLabel, platform: instruction.platform, eventLabel: instruction.eventLabel, selectionLabel: instruction.selectionLabel, ticketType: instruction.ticketType || 'single', legs: Array.isArray(instruction.legs) ? instruction.legs.map((leg) => ({ eventId: leg.eventId, eventLabel: leg.eventLabel, selectionLabel: leg.selectionLabel, oddsDecimal: leg.oddsDecimal })) : [], notes: instruction.notes || '', stakeMinor: instruction.stakeMinor, oddsDecimal: instruction.oddsDecimal, eventId: instruction.eventId, marketId: instruction.marketId, outcomeId: instruction.outcomeId, maxNetProfitMinor: instruction.maxNetProfitMinor, stakeAdjusted: instruction.stakeAdjusted === true, currency: instruction.currency, status: instruction.status, reservationReleaseState: instruction.reservationReleaseState || (instruction.reservationActive ? 'active' : 'not_applicable'), submissionEnabled: false, createdAt: instruction.createdAt, updatedAt: instruction.updatedAt };
+  return { id: instruction._id.toString(), accountId: instruction.accountId.toString(), accountLabel: instruction.accountLabel, platform: instruction.platform, eventLabel: instruction.eventLabel, selectionLabel: instruction.selectionLabel, ticketType: instruction.ticketType || 'single', legs: Array.isArray(instruction.legs) ? instruction.legs.map((leg) => ({ eventId: leg.eventId, eventLabel: leg.eventLabel, selectionLabel: leg.selectionLabel, oddsDecimal: leg.oddsDecimal })) : [], notes: instruction.notes || '', stakeMinor: instruction.stakeMinor, oddsDecimal: instruction.oddsDecimal, eventId: instruction.eventId, marketId: instruction.marketId, outcomeId: instruction.outcomeId, maxNetProfitMinor: instruction.maxNetProfitMinor, stakeAdjusted: instruction.stakeAdjusted === true, currency: instruction.currency, status: instruction.status, reservationReleaseState: instruction.reservationReleaseState || (instruction.reservationActive ? 'active' : 'not_applicable'), wagerExecutionStatus: instruction.wagerExecutionStatus || null, submissionEnabled: false, createdAt: instruction.createdAt, updatedAt: instruction.updatedAt };
 }
 
 app.get('/api/integrations', requireAuthLazy, (_req, res) => {
