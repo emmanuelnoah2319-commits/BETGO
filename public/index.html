@@ -127,9 +127,19 @@
           <div id="sportybet-fixtures-list" class="account-list" aria-live="polite"><p class="empty-state">Tap “Load live fixtures” to request current data.</p></div>
         </div>
       </section>
-      <section class="panel emergency">
-        <div><p class="eyebrow">SAFETY CONTROL</p><h2>Emergency stop</h2><p class="muted">New betting submissions are disabled in this foundation. The control will become operational when the submission engine is implemented.</p></div>
-        <button class="button-danger" disabled title="Bet submission is not enabled">Stop submissions</button>
+      <section id="operations-section" class="panel emergency dashboard-section" hidden>
+        <div class="ops-body">
+          <p class="eyebrow">SAFETY CONTROL</p><h2>Emergency stop</h2>
+          <p id="ops-status" class="muted" aria-live="polite">Loading status…</p>
+          <p id="ops-counts" class="muted small"></p>
+          <form id="ops-form" class="account-form">
+            <label for="ops-reason">Reason for engaging the stop</label>
+            <input id="ops-reason" required minlength="3" maxlength="300" placeholder="e.g. Pausing activity while I investigate">
+            <button id="ops-engage" class="button-danger" type="submit">Engage emergency stop</button>
+          </form>
+          <p id="ops-message" role="status" hidden></p>
+          <p class="muted small">Execution and bookmaker requests are hard-disabled regardless of this control. Clearing the stop is a deliberate API action and is not offered here.</p>
+        </div>
       </section>
       <p id="dashboard-error" class="form-error" role="alert" hidden></p>
     </section>

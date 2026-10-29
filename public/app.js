@@ -196,6 +196,7 @@ async function loadDashboard() {
     $('#admin-applications-section').hidden = user.role !== 'owner';
     $('#admin-users-section').hidden = user.role !== 'owner';
     $('#member-subscription-panel').hidden = user.role === 'owner';
+    $('#operations-section').hidden = user.role !== 'owner';
     if (user.role !== 'owner') {
       const subscriptions = user.subscriptions || [];
       const active = subscriptions.filter((item) => item.active);
@@ -214,7 +215,7 @@ async function loadDashboard() {
     } else { for (const option of $('#account-platform').options) option.disabled = false; }
     $('#password-change-panel').hidden = !user.mustChangePassword;
     if (user.mustChangePassword) return;
-    await Promise.all([loadAccounts(), loadIntegrations(), loadSafetyPolicy(), loadInstructions(), ...(user.role === 'owner' ? [loadApplications(), loadUsers()] : [])]);
+    await Promise.all([loadAccounts(), loadIntegrations(), loadSafetyPolicy(), loadInstructions(), ...(user.role === 'owner' ? [loadApplications(), loadUsers(), loadOperations()] : [])]);
   } catch (error) {
     if (error.message === 'Login required' || error.message.includes('Session')) return showLogin();
     $('#dashboard-error').hidden = false; $('#dashboard-error').textContent = error.message;
@@ -424,3 +425,25 @@ async function loadUsers() {
 $('#refresh-users').addEventListener('click', async () => { try { await loadUsers(); showMessage('users-message', 'Members refreshed.'); } catch (error) { showMessage('users-message', error.message, true); } });
 let userSearchTimer = null;
 $('#user-search').addEventListener('input', () => { clearTimeout(userSearchTimer); userSearchTimer = setTimeout(() => { loadUsers().catch((error) => showMessage('users-message', error.message, true)); }, 300); });
+
+async function loadOperations() {
+  try {
+    const { operations } = await request('/api/admin/operations');
+    const stop = operations.emergencyStop;
+    $('#ops-status').textContent = stop.emergencyStop
+      ? `Emergency stop is ACTIVE${stop.reason ? ` — ${stop.reason}` : ''}${stop.updatedAt ? ` (${new Date(stop.updatedAt).toLocaleString()})` : ''}.`
+      : `Emergency stop is cleared${stop.updatedAt ? ` (${new Date(stop.updatedAt).toLocaleString()})` : ''}. Betting execution is still disabled.`;
+    const counts = operations.submissionCounts || {};
+    const alerts = operations.alerts || [];
+    $('#ops-counts').textContent = `Submissions — queued ${counts.queued ?? 0}, unknown ${counts.unknown ?? 0}, accepted ${counts.accepted ?? 0}. Recovery worker: ${operations.worker?.state || 'unknown'}.${alerts.length ? ` Alerts: ${alerts.join(', ')}.` : ''}`;
+    $('#ops-engage').disabled = stop.emergencyStop === true;
+  } catch (error) { showMessage('ops-message', error.message, true); }
+}
+$('#ops-form').addEventListener('submit', async (event) => {
+  event.preventDefault(); const button = $('#ops-engage'); button.disabled = true;
+  try {
+    await mutate('/api/admin/emergency-stop', 'PATCH', { enabled: true, reason: $('#ops-reason').value.trim() });
+    $('#ops-form').reset(); showMessage('ops-message', 'Emergency stop engaged.');
+  } catch (error) { showMessage('ops-message', error.message, true); }
+  await loadOperations();
+});

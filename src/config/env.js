@@ -43,6 +43,17 @@ export function loadConfig(source = process.env) {
   if (env.NODE_ENV === 'production' && env.SESSION_SECRET.includes('replace-with')) {
     throw new Error('Replace the placeholder SESSION_SECRET in production');
   }
+  // Flutterwave redirects the customer's browser here after checkout, so it must be a public HTTPS page on this app.
+  const callback = env.FLW_CALLBACK_URL || `${env.APP_ORIGIN}/payment/return`;
+  if (env.NODE_ENV === 'production') {
+    const url = new URL(callback);
+    const host = url.hostname;
+    if (url.protocol !== 'https:') throw new Error('FLW_CALLBACK_URL must use https in production');
+    if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.endsWith('.local')) throw new Error('FLW_CALLBACK_URL must be a public URL in production, not localhost');
+    if (url.origin !== new URL(env.APP_ORIGIN).origin) throw new Error('FLW_CALLBACK_URL must be on the same origin as APP_ORIGIN');
+    if (url.pathname.replace(/\/+$/, '') !== '/payment/return') throw new Error('FLW_CALLBACK_URL must point to /payment/return');
+    if (url.search) throw new Error('FLW_CALLBACK_URL must not contain a query string; Flutterwave appends its own parameters');
+  }
   if (Boolean(env.BOOTSTRAP_OWNER_EMAIL) !== Boolean(env.BOOTSTRAP_OWNER_PASSWORD)) {
     throw new Error('BOOTSTRAP_OWNER_EMAIL and BOOTSTRAP_OWNER_PASSWORD must be provided together');
   }

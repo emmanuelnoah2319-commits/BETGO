@@ -24,3 +24,10 @@ If step 3 fails, find `payment_return_rejected` or `payment.mismatch` (audit) in
 - Signing in with the right password after every subscription has lapsed returns 403 `SUBSCRIPTION_EXPIRED` with renewal instructions (a wrong password still gets the generic error). One lapsed bookmaker does not block a member with another active one; its accounts are hidden until renewed.
 - `DELETE /api/accounts/:id` removes an account record unless instructions or submissions reference it (409 `ACCOUNT_IN_USE`). Each account keeps its own connection status; members may hold any number of accounts per subscribed bookmaker.
 - No bookmaker can reach "connected" yet: that needs a verified connector (see docs/CONNECTOR-RELEASE-GATE.md).
+
+## Callback URL (production)
+`FLW_CALLBACK_URL` is validated at startup in production: it must be HTTPS, public (not localhost), on the same origin as `APP_ORIGIN`, end in `/payment/return` and carry no query string. If unset it defaults to `APP_ORIGIN/payment/return`. The payment result page now loads `/payment-result.css` instead of an inline `<style>`, which the app's CSP blocked.
+
+## Legacy expiry and operations panel
+- A subscription with no expiry date is now inactive (previously unlimited). On startup, `backfillLegacyExpiry` gives each such member subscription 30 days from its start (or account creation), with at least 7 days from the startup time, and writes a `subscription.legacy_expiry_backfill` audit event. It is idempotent and version-guarded.
+- The dashboard's owner-only "Emergency stop" panel is now live: it shows the persisted state, submission counts and worker health from `GET /api/admin/operations`, and can engage the stop. Clearing remains an explicit API call. Members no longer see this panel.

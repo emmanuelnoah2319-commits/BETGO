@@ -469,7 +469,7 @@ app.get('/payment/return', async (req, res, next) => {
 });
 
 function paymentResultPage(title, message) {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)} — BETGO</title><style>body{font-family:system-ui,sans-serif;max-width:640px;margin:12vh auto;padding:24px;line-height:1.6;color:#172033}main{border:1px solid #dce2ea;border-radius:16px;padding:28px}h1{font-size:1.6rem}a{color:#1749a5}</style></head><body><main><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p><p><a href="/">Return to BETGO</a></p></main></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)} — BETGO</title><link rel=\"stylesheet\" href=\"/payment-result.css\"></head><body><main><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p><p><a href="/">Return to BETGO</a></p></main></body></html>`;
 }
 
 app.post('/api/payments/flutterwave/webhook', async (req, res, next) => {

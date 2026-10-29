@@ -31,6 +31,7 @@ export function createFakeDb({ unique = { users: ['emailNormalized'], payments: 
   const table = (name) => { if (!store.has(name)) store.set(name, []); return store.get(name); };
   const collection = (name) => ({
     async findOne(filter = {}) { await Promise.resolve(); const hit = table(name).find((d) => matches(d, filter)); return hit ? structuredClone(hit) : null; },
+    find(filter = {}) { return { async toArray() { await Promise.resolve(); return table(name).filter((d) => matches(d, filter)).map((d) => structuredClone(d)); } }; },
     async insertOne(doc) {
       await Promise.resolve();
       for (const field of unique[name] || []) {

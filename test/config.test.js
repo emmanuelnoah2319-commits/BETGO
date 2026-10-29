@@ -37,3 +37,17 @@ test('provides per-bookmaker prices and a 30-day membership default', () => {
   assert.equal(config.bookmakerPricesNgn.SportyBet, 5000);
   assert.equal(config.bookmakerPricesNgn.BetWinner, 6000);
 });
+
+const prod = { ...base, NODE_ENV: 'production', SESSION_COOKIE_SECURE: 'true', APP_ORIGIN: 'https://betgo.example.com' };
+
+test('production accepts the default callback derived from APP_ORIGIN', () => {
+  assert.equal(loadConfig(prod).flutterwaveCallbackUrl, 'https://betgo.example.com/payment/return');
+});
+
+test('production rejects callback URLs Flutterwave cannot redirect to', () => {
+  assert.throws(() => loadConfig({ ...prod, FLW_CALLBACK_URL: 'http://betgo.example.com/payment/return' }), /https/);
+  assert.throws(() => loadConfig({ ...prod, APP_ORIGIN: 'https://localhost:3000', FLW_CALLBACK_URL: 'https://localhost:3000/payment/return' }), /localhost/);
+  assert.throws(() => loadConfig({ ...prod, FLW_CALLBACK_URL: 'https://other.example.org/payment/return' }), /same origin/);
+  assert.throws(() => loadConfig({ ...prod, FLW_CALLBACK_URL: 'https://betgo.example.com/' }), /payment\/return/);
+  assert.throws(() => loadConfig({ ...prod, FLW_CALLBACK_URL: 'https://betgo.example.com/payment/return?x=1' }), /query/);
+});

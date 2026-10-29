@@ -4,7 +4,7 @@ export const OPEN_APPLICATION_STATUSES = Object.freeze(['pending', 'approved_awa
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // Returns [{ bookmaker, startedAt, expiresAt }]. Users created before multi-bookmaker support only have
-// `bookmaker` + `subscriptionExpiresAt`, so those are mapped to a single subscription (null expiry = no expiry).
+// `bookmaker` + `subscriptionExpiresAt`, so those are mapped to a single subscription (a missing expiry is NOT treated as unlimited; see backfillLegacyExpiry).
 export function subscriptionsOf(user) {
   if (!user) return [];
   if (Array.isArray(user.subscriptions)) return user.subscriptions.filter((item) => item?.bookmaker);
@@ -13,7 +13,8 @@ export function subscriptionsOf(user) {
 }
 
 export function isActive(subscription, now = new Date()) {
-  return !subscription.expiresAt || new Date(subscription.expiresAt) > now;
+  // A subscription without an expiry date is inactive: every paid period is exactly 30 days, so none is open-ended.
+  return Boolean(subscription.expiresAt) && new Date(subscription.expiresAt) > now;
 }
 
 export function activeBookmakers(user, now = new Date()) {
