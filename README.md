@@ -113,7 +113,7 @@ The dashboard and API expose configurable limits at `GET/PATCH /api/safety-polic
 
 ## Bookmaker connector status
 
-The target platforms are SportyBet, Football.com Nigeria, BetWinner, Sokabet and MSport. The connector registry currently reports all five as unavailable and disables account authentication, balance lookup, bet placement and bet-status lookup. This is intentional: a data feed or a non-staking booking-code endpoint is not a bet-placement API. No bookmaker credentials are collected and no submission request is sent.
+The target platforms are SportyBet and Football.com Nigeria. The connector registry currently reports both as unavailable and disables account authentication, balance lookup, bet placement and bet-status lookup. This is intentional: a data feed or a non-staking booking-code endpoint is not a bet-placement API. No bookmaker credentials are collected and no submission request is sent.
 
 The release-gate helper in `src/integrations/readiness-gate.js` checks provider authorization, official placement documentation, sandbox results, reconciliation, idempotency, secret storage, stake limits, emergency stop and adapter methods. Each item must include a verification flag, evidence reference, reviewer and review timestamp; bare booleans do not pass. Passing it only marks a connector eligible for separate release review; it does not enable or execute a connector. See `docs/CONNECTOR-RELEASE-GATE.md`.
 

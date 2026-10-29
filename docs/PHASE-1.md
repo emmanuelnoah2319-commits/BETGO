@@ -4,7 +4,7 @@
 - Company/product: BETGO
 - New repository; private dashboard
 - Node.js/Express ES modules, vanilla HTML/CSS/JS, MongoDB, FCM
-- Target bookmakers: SportyBet, Football.com Nigeria (`football.com/ng`), BetWinner, Sokabet and MSport
+- Target bookmakers: SportyBet and Football.com Nigeria (`football.com/ng`)
 - No official API/partner credentials currently available
 - Automatic betting disabled by default
 
@@ -43,7 +43,7 @@ Environment validation, MongoDB connection/indexes, Argon2id owner authenticatio
 
 ### Required deployment environment
 
-Set `RESEND_API_KEY`, a verified `EMAIL_FROM`, `FLW_SECRET_KEY`, and a strong random `FLW_SECRET_HASH` in Render. Set `FLW_CALLBACK_URL` to the deployed return URL. In the Flutterwave dashboard, configure the webhook URL as `/api/payments/flutterwave/webhook` and use the exact same secret hash. Configure prices with `PRICE_SPORTYBET_NGN`, `PRICE_FOOTBALL_COM_NGN`, `PRICE_BETWINNER_NGN`, `PRICE_SOKABET_NGN`, and `PRICE_MSPORT_NGN`. Keep secrets in Render environment settings; never commit them. Configure Flutterwave to send the `charge.completed` webhook to `/api/payments/flutterwave/webhook`.
+Set `RESEND_API_KEY`, a verified `EMAIL_FROM`, `FLW_SECRET_KEY`, and a strong random `FLW_SECRET_HASH` in Render. Set `FLW_CALLBACK_URL` to the deployed return URL. In the Flutterwave dashboard, configure the webhook URL as `/api/payments/flutterwave/webhook` and use the exact same secret hash. Configure prices with `PRICE_SPORTYBET_NGN` and `PRICE_FOOTBALL_COM_NGN`. Keep secrets in Render environment settings; never commit them. Configure Flutterwave to send the `charge.completed` webhook to `/api/payments/flutterwave/webhook`.
 
 ### Verification status
 

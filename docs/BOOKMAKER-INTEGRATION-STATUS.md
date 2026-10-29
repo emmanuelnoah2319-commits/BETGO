@@ -10,22 +10,17 @@ BETGO's required integration is an account-level betting interface that can subm
 |---|---|---|
 | SportyBet | Not verified. A public community project describes website endpoints for fixtures/markets and a shareable booking code. It explicitly says the booking-code flow does not submit or stake a wager and that the endpoints are undocumented/unsupported. | Do not treat as a real betting connector. Seek written permission and a supported placement interface. |
 | Football.com Nigeria | Not verified in this discovery pass. | Unavailable; ask the operator for a partner/API specification. |
-| BetWinner | Not verified in this discovery pass. Public website terms describing normal customer betting are not developer API documentation. | Unavailable; ask the operator for an authorized integration/partner route. |
-| Sokabet | Not verified in this discovery pass. | Unavailable; ask the operator for a partner/API specification. |
-| MSport | Not verified. Its official Nigeria contact page lists `marketing.nigeria@msport.com` for business and other enquiries. | Ask the operator whether an approved betting API or B2B integration exists; do not infer access from the contact page. |
 
 ## Sources checked
 
 - SportyBet community connector description (not official): https://github.com/UbongErnest/Sportybet-mcp
 - SportyBet API discussion, updated October 2026 (secondary source): https://sportapi.net/blog/sportybet-api.html
-- MSport official Nigeria contact page: https://www.msport.com/ng/support/about/contact-us
-- BetWinner Nigeria website: https://betwinner.ng/en
 
 These sources do not establish a permitted real-money bet-placement API for any of the five target platforms. Search results, reverse-engineered website endpoints, affiliate links, booking-code creation and sports-data feeds must not be represented as a bookmaker bet-placement API.
 
 ## Next external action
 
-A copy-ready outreach message, operator contact routes, required questions and activation checklist are now in [`BOOKMAKER-API-ACCESS-REQUESTS.md`](./BOOKMAKER-API-ACCESS-REQUESTS.md). These requests have not been sent by BETGO. The project owner must contact the operators and record their replies. Start with SportyBet and MSport because official contact routes were found; then use the official Nigeria support routes for Football.com, BetWinner and Sokabet. A partner/affiliate page alone does not prove that a betting API is available. If a response only offers affiliate tracking, odds data or booking-code sharing, it does not satisfy BETGO's requirement. Never submit bookmaker passwords, OTPs or recovery codes to a third-party integration service.
+A copy-ready outreach message, operator contact routes, required questions and activation checklist are now in [`BOOKMAKER-API-ACCESS-REQUESTS.md`](./BOOKMAKER-API-ACCESS-REQUESTS.md). These requests have not been sent by BETGO. The project owner must contact the operators and record their replies. Start with SportyBet because an official contact route was found; then use the official Nigeria support route for Football.com. A partner/affiliate page alone does not prove that a betting API is available. If a response only offers affiliate tracking, odds data or booking-code sharing, it does not satisfy BETGO's requirement. Never submit bookmaker passwords, OTPs or recovery codes to a third-party integration service.
 
 ## Connector activation gate
 

@@ -13,8 +13,8 @@ test('new email may apply for any bookmaker', () => {
 
 test('same email may apply for a different bookmaker while another is active or pending', () => {
   const user = member([sub('SportyBet', 10)]);
-  assert.equal(applicationBlock({ user, pending: null, bookmaker: 'BetWinner', now }), null);
-  assert.equal(applicationBlock({ user: null, pending: null, bookmaker: 'MSport', now }), null);
+  assert.equal(applicationBlock({ user, pending: null, bookmaker: 'Football.com Nigeria', now }), null);
+  assert.equal(applicationBlock({ user: null, pending: null, bookmaker: 'Football.com Nigeria', now }), null);
 });
 
 test('same bookmaker with an open application is a duplicate', () => {
@@ -27,7 +27,7 @@ test('same bookmaker while active must go through renewal', () => {
 });
 
 test('same bookmaker after expiry may apply again', () => {
-  const user = member([sub('SportyBet', -1), sub('BetWinner', 5)]);
+  const user = member([sub('SportyBet', -1), sub('Football.com Nigeria', 5)]);
   assert.equal(applicationBlock({ user, pending: null, bookmaker: 'SportyBet', now }), null);
 });
 
@@ -39,20 +39,20 @@ test('legacy single-bookmaker users are mapped to one subscription', () => {
   const legacy = { role: 'member', bookmaker: 'SportyBet', subscriptionExpiresAt: new Date(now.getTime() + 5 * day) };
   assert.deepEqual(subscriptionsOf(legacy).map((s) => s.bookmaker), ['SportyBet']);
   assert.equal(canUseBookmaker(legacy, 'SportyBet', now), true);
-  assert.equal(canUseBookmaker(legacy, 'BetWinner', now), false);
+  assert.equal(canUseBookmaker(legacy, 'Football.com Nigeria', now), false);
   assert.equal(applicationBlock({ user: legacy, pending: null, bookmaker: 'SportyBet', now }).code, 'RENEWAL_REQUIRED');
 });
 
 test('member is expired only when no subscription is active', () => {
-  assert.equal(isSubscriptionExpired(member([sub('SportyBet', -2), sub('MSport', 3)]), now), false);
-  assert.equal(isSubscriptionExpired(member([sub('SportyBet', -2), sub('MSport', -1)]), now), true);
+  assert.equal(isSubscriptionExpired(member([sub('SportyBet', -2), sub('Football.com Nigeria', 3)]), now), false);
+  assert.equal(isSubscriptionExpired(member([sub('SportyBet', -2), sub('Football.com Nigeria', -1)]), now), true);
   assert.equal(isSubscriptionExpired({ role: 'owner' }, now), false);
   assert.equal(isSubscriptionExpired({ role: 'member' }, now), false);
 });
 
 test('granting adds a bookmaker without touching the others', () => {
   const user = member([sub('SportyBet', 10)]);
-  const grant = grantSubscription(user, 'BetWinner', now);
+  const grant = grantSubscription(user, 'Football.com Nigeria', now);
   assert.equal(grant.subscriptions.length, 2);
   assert.equal(grant.bookmakerExpiresAt.getTime(), now.getTime() + 30 * day);
   assert.equal(grant.subscriptions[0].expiresAt.getTime(), now.getTime() + 10 * day);

@@ -1,9 +1,6 @@
 const PLATFORMS = Object.freeze([
   'SportyBet',
-  'Football.com Nigeria',
-  'BetWinner',
-  'Sokabet',
-  'MSport'
+  'Football.com Nigeria'
 ]);
 
 /**

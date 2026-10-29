@@ -12,7 +12,7 @@ const config = { nodeEnv: 'test', appOrigin: 'https://betgo.example', flutterwav
 
 async function withServer(run) {
   const db = createFakeDb();
-  const application = db.seed('applications', { fullName: 'Ada', email: 'ada@example.com', emailNormalized: 'ada@example.com', bookmaker: 'BetWinner', priceNgn: 6000, status: 'approved_awaiting_payment' });
+  const application = db.seed('applications', { fullName: 'Ada', email: 'ada@example.com', emailNormalized: 'ada@example.com', bookmaker: 'Football.com Nigeria', priceNgn: 6000, status: 'approved_awaiting_payment' });
   db.seed('payments', { applicationId: application._id, reference: REF, amountNgn: 6000, status: 'pending', provider: 'flutterwave' });
   app.locals.config = config; app.locals.db = db;
   const server = app.listen(0); await new Promise((r) => server.once('listening', r));

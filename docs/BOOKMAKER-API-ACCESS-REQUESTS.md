@@ -40,9 +40,6 @@ These are routes found on the operators' official websites where possible. A lis
 |---|---|---|
 | SportyBet Nigeria | Official site: https://www.sportybet.com/ng/ ; support contacts on official help page: https://www.sportybet.com/ng/help?nav=terms-and-conditions | Ask support to route the request to technical partnerships. No public third-party bet-placement API verified. |
 | Football.com Nigeria | Official site/about: https://www.football.com/ng/m/n/help/about ; customer support: https://www.football.com/ng/m/support | Use the official support route and request business/technical partnership contact. No public third-party bet-placement API verified. |
-| BetWinner Nigeria | Official contacts: https://betwinner.ng/en/information/contacts | Ask for the Nigeria operator's technical partnership/API contact; don't assume marketing or affiliate contacts provide placement access. No public third-party bet-placement API verified. |
-| Sokabet Nigeria | Official site: https://sokabet.com/sokabet-nigeria-app/ | Use the site's official support/contact route and request the Nigeria operator's technical/B2B team. The support email found on a Sokabet-branded Tanzania page is not assumed to apply to Nigeria. No public third-party bet-placement API verified. |
-| MSport Nigeria | Official contact page: https://www.msport.com/ng/support/about/contact-us ; business enquiries listed as `marketing.nigeria@msport.com` | Ask the business team whether an authorized sportsbook placement API/B2B product exists and request documentation/sandbox. No public third-party bet-placement API verified. |
 
 ## Questions to record for every provider
 
@@ -67,8 +64,5 @@ Until then, BETGO must keep the provider `unavailable`, `betPlacement: false`, a
 
 - SportyBet official Nigeria site and help page; official customer contact details are listed there.
 - Football.com Nigeria official About page identifies Football Internet Ltd. as the operator; its official support route is listed above.
-- BetWinner Nigeria official contacts page.
-- Sokabet Nigeria official site. A separate Sokabet-branded Tanzania site lists a support email, but that contact is deliberately not reused as a verified Nigeria business contact.
-- MSport official Nigeria contact page lists a business-enquiries address.
 
 The sources establish contact routes, not API availability. API availability remains unverified for all five target operators.

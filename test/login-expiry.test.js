@@ -36,7 +36,7 @@ test('a wrong password never reveals whether the subscription lapsed', async () 
 test('one lapsed bookmaker does not block a member who still has another active one', async () => {
   const db = await memberWith([
     { bookmaker: 'SportyBet', startedAt: new Date(Date.now() - 31 * DAY), expiresAt: new Date(Date.now() - DAY) },
-    { bookmaker: 'MSport', startedAt: new Date(), expiresAt: new Date(Date.now() + 20 * DAY) }
+    { bookmaker: 'Football.com Nigeria', startedAt: new Date(), expiresAt: new Date(Date.now() + 20 * DAY) }
   ]);
   assert.ok((await login(db, config, creds('correct-horse-battery'))).token);
 });

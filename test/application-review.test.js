@@ -4,10 +4,10 @@ import { createFakeDb } from '../test-support/fake-db.js';
 import { approveApplication, rejectApplication, resendPaymentEmail } from '../src/services/application-review.js';
 import { emailPreflight, emailSenderStatus, parseSenderAddress, sendEmail } from '../src/services/notifications.js';
 
-const prices = { SportyBet: 5000, BetWinner: 6000 };
+const prices = { SportyBet: 5000, 'Football.com Nigeria': 6000 };
 const config = { flutterwaveSecretKey: 'k', flutterwaveCallbackUrl: 'https://betgo.example/payment/return', resendApiKey: 're_x', emailFrom: 'BETGO <no-reply@betgo.example>', emailTestingRecipient: '' };
 
-function setup(bookmaker = 'BetWinner') {
+function setup(bookmaker = 'Football.com Nigeria') {
   const db = createFakeDb();
   const application = db.seed('applications', { fullName: 'Ada', email: 'ada@example.com', emailNormalized: 'ada@example.com', bookmaker, priceNgn: prices[bookmaker], status: 'pending' });
   const calls = [];
@@ -18,7 +18,7 @@ function setup(bookmaker = 'BetWinner') {
 }
 
 test('approval charges the bookmaker-specific price, stores a pending payment and emails the link', async () => {
-  const { db, calls, sent, initializePayment, sendOk, base } = setup('BetWinner');
+  const { db, calls, sent, initializePayment, sendOk, base } = setup('Football.com Nigeria');
   const result = await approveApplication(db, config, { ...base, initializePayment, sendEmail: sendOk });
   assert.equal(calls[0].amountNgn, 6000);
   assert.match(calls[0].reference, /^betgo_[a-f0-9]{24}_[a-f0-9]{32}$|^betgo_id\d+_[a-f0-9]{32}$/);

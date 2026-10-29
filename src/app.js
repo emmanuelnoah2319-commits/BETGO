@@ -27,7 +27,7 @@ import { initializeFlutterwavePayment, verifyFlutterwaveByReference, verifyFlutt
 import { capStakeToNetProfit } from './services/profit-cap.js';
 import { OPEN_APPLICATION_STATUSES, allowedBookmakers, applicationBlock, canUseBookmaker, grantSubscription, hasSubscriptionRecord, latestExpiry, publicSubscriptions, subscriptionsOf } from './services/subscriptions.js';
 
-const supportedPlatforms = ['SportyBet', 'Football.com Nigeria', 'BetWinner', 'Sokabet', 'MSport'];
+const supportedPlatforms = ['SportyBet', 'Football.com Nigeria'];
 const accountCreateSchema = z.object({
   displayName: z.string().trim().min(1).max(60),
   platform: z.enum(supportedPlatforms),

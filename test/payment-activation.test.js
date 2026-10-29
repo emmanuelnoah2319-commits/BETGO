@@ -32,13 +32,13 @@ test('mismatch checks: status, reference, currency and amount must all match; pa
 });
 
 test('a paid new applicant gets one member, one 30-day subscription for the right bookmaker, and one login email', async () => {
-  const { db, run, sent } = setup({ bookmaker: 'BetWinner', price: 6000 });
+  const { db, run, sent } = setup({ bookmaker: 'Football.com Nigeria', price: 6000 });
   const result = await run();
   assert.equal(result.outcome, 'activated');
   const [user] = db.rows('users');
   assert.equal(user.role, 'member');
   assert.equal(user.mustChangePassword, true);
-  assert.deepEqual(user.subscriptions.map((s) => s.bookmaker), ['BetWinner']);
+  assert.deepEqual(user.subscriptions.map((s) => s.bookmaker), ['Football.com Nigeria']);
   assert.equal(new Date(user.subscriptions[0].expiresAt).getTime() - NOW.getTime(), 30 * DAY);
   assert.equal(db.rows('payments')[0].status, 'paid');
   assert.equal(db.rows('applications')[0].status, 'active');
@@ -50,7 +50,7 @@ test('a paid new applicant gets one member, one 30-day subscription for the righ
 });
 
 test('the amount charged is bound to the bookmaker price on the payment record', async () => {
-  const { db, run, verified } = setup({ price: 6000, bookmaker: 'MSport' });
+  const { db, run, verified } = setup({ price: 6000, bookmaker: 'Football.com Nigeria' });
   const wrong = await run({ verified: { ...verified, amount: 5000 } });
   assert.deepEqual([wrong.outcome, wrong.reason], ['mismatch', 'amount_mismatch']);
   assert.equal(db.rows('users').length, 0);
@@ -79,12 +79,12 @@ test('a duplicate delivery later does not extend the subscription, rotate the pa
 
 test('an existing member buying a second bookmaker keeps their password and other subscription', async () => {
   const start = new Date(NOW.getTime() - 5 * DAY);
-  const { db, run, sent } = setup({ bookmaker: 'MSport', existingUser: { email: 'ada@example.com', emailNormalized: 'ada@example.com', role: 'member', passwordHash: 'keep-me', mustChangePassword: false, subscriptions: [{ bookmaker: 'SportyBet', startedAt: start, expiresAt: new Date(start.getTime() + 30 * DAY) }] } });
+  const { db, run, sent } = setup({ bookmaker: 'Football.com Nigeria', existingUser: { email: 'ada@example.com', emailNormalized: 'ada@example.com', role: 'member', passwordHash: 'keep-me', mustChangePassword: false, subscriptions: [{ bookmaker: 'SportyBet', startedAt: start, expiresAt: new Date(start.getTime() + 30 * DAY) }] } });
   const result = await run();
   assert.deepEqual([result.outcome, result.createdAccount], ['activated', false]);
   const user = db.rows('users')[0];
   assert.equal(user.passwordHash, 'keep-me');
-  assert.deepEqual(user.subscriptions.map((s) => s.bookmaker).sort(), ['MSport', 'SportyBet']);
+  assert.deepEqual(user.subscriptions.map((s) => s.bookmaker).sort(), ['Football.com Nigeria', 'SportyBet']);
   assert.doesNotMatch(sent[0].text, /#reset=/);
 });
 
@@ -104,10 +104,10 @@ test('two different bookmaker payments for one member at the same moment both la
     db.seed('payments', { applicationId: application._id, reference: ref, amountNgn: 5000, status: 'pending', provider: 'flutterwave' });
     return { id: 1, tx_ref: ref, status: 'successful', amount: 5000, currency: 'NGN' };
   };
-  const a = make('SportyBet', REF); const b = make('Sokabet', `betgo_${'c'.repeat(24)}_${'d'.repeat(32)}`);
+  const a = make('SportyBet', REF); const b = make('Football.com Nigeria', `betgo_${'c'.repeat(24)}_${'d'.repeat(32)}`);
   const base = { hashPassword, sendEmail: async () => {}, appOrigin: 'x', now: NOW };
   await Promise.all([activateVerifiedPayment(db, { ...base, verified: a }), activateVerifiedPayment(db, { ...base, verified: b })]);
-  assert.deepEqual(db.rows('users')[0].subscriptions.map((s) => s.bookmaker).sort(), ['Sokabet', 'SportyBet']);
+  assert.deepEqual(db.rows('users')[0].subscriptions.map((s) => s.bookmaker).sort(), ['Football.com Nigeria', 'SportyBet']);
 });
 
 test('an unknown reference or an owner email never creates or changes an account', async () => {

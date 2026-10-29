@@ -56,7 +56,7 @@
         <form id="application-form" class="account-form">
           <label for="application-name">Full name</label><input id="application-name" required maxlength="100" autocomplete="name" placeholder="Your full name">
           <label for="application-email">Email address</label><input id="application-email" type="email" required maxlength="254" autocomplete="email" placeholder="you@example.com">
-          <label for="application-bookmaker">Bookmaker bot</label><select id="application-bookmaker" required><option value="SportyBet">SportyBet — ₦5,000 / 30 days</option><option value="Football.com Nigeria">Football.com Nigeria — ₦5,000 / 30 days</option><option value="BetWinner">BetWinner — ₦6,000 / 30 days</option><option value="Sokabet">Sokabet — ₦5,000 / 30 days</option><option value="MSport">MSport — ₦6,000 / 30 days</option></select>
+          <label for="application-bookmaker">Bookmaker bot</label><select id="application-bookmaker" required><option value="SportyBet">SportyBet — ₦5,000 / 30 days</option><option value="Football.com Nigeria">Football.com Nigeria — ₦5,000 / 30 days</option></select>
           <button id="application-button" type="submit">Submit application</button>
         </form><p id="application-message" role="status" hidden></p>
         <p class="muted small">Submitting an application does not create an account or charge you. Prices are configurable by the operator.</p>
@@ -72,7 +72,7 @@
       <div class="metric-grid" data-view="overview">
         <article class="metric"><span>Account records</span><strong id="account-count">0</strong><small>Records only; not live connections</small></article>
         <article class="metric"><span>Automatic betting</span><strong class="off-value">OFF</strong><small>Disabled by default</small></article>
-        <article class="metric"><span>Available integrations</span><strong id="integration-count">0 / 5</strong><small>Awaiting approved access</small></article>
+        <article class="metric"><span>Available integrations</span><strong id="integration-count">0 / 2</strong><small>Awaiting approved access</small></article>
       </div>
       <section id="accounts-section" data-view="accounts" class="panel dashboard-section">
         <div class="panel-heading"><div><p class="eyebrow">ACCOUNT RECORDS</p><h2>Manage bookmaker accounts</h2></div><span class="pill">Not connected</span></div>
@@ -81,7 +81,7 @@
         <form id="account-form" class="account-form">
           <div class="form-grid">
             <div><label for="account-name">Account label</label><input id="account-name" name="displayName" required maxlength="60" placeholder="e.g. Main SportyBet"></div>
-            <div><label for="account-platform">Bookmaker</label><select id="account-platform" name="platform" required><option value="SportyBet">SportyBet</option><option value="Football.com Nigeria">Football.com Nigeria</option><option value="BetWinner">BetWinner</option><option value="Sokabet">Sokabet</option><option value="MSport">MSport</option></select></div>
+            <div><label for="account-platform">Bookmaker</label><select id="account-platform" name="platform" required><option value="SportyBet">SportyBet</option><option value="Football.com Nigeria">Football.com Nigeria</option></select></div>
           </div>
           <label for="account-notes">Notes (optional)</label><textarea id="account-notes" name="notes" rows="2" maxlength="300" placeholder="Non-sensitive notes only"></textarea>
           <button id="create-account-button" type="submit">Add account record</button>

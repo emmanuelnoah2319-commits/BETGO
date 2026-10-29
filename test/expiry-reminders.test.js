@@ -23,9 +23,9 @@ test('the most urgent stage is chosen and supersedes the earlier ones', () => {
 });
 
 test('a stage already sent is not repeated, and each bookmaker is tracked separately', () => {
-  const user = member([{ bookmaker: 'SportyBet', expiresAt: at(2), reminders: { d3: now } }, { bookmaker: 'MSport', expiresAt: at(2) }]);
+  const user = member([{ bookmaker: 'SportyBet', expiresAt: at(2), reminders: { d3: now } }, { bookmaker: 'Football.com Nigeria', expiresAt: at(2) }]);
   const due = dueReminders(user, now);
-  assert.deepEqual(due.map((item) => item.bookmaker), ['MSport']);
+  assert.deepEqual(due.map((item) => item.bookmaker), ['Football.com Nigeria']);
 });
 
 test('an expiry notice goes out only shortly after expiry, once', () => {
@@ -72,7 +72,7 @@ function fakeDb(users) {
 }
 
 test('a run sends one email per due stage and a second run sends nothing', async () => {
-  const db = fakeDb([member([{ bookmaker: 'SportyBet', expiresAt: at(2) }, { bookmaker: 'MSport', expiresAt: at(20) }])]);
+  const db = fakeDb([member([{ bookmaker: 'SportyBet', expiresAt: at(2) }, { bookmaker: 'Football.com Nigeria', expiresAt: at(20) }])]);
   const sent = [];
   const sendEmail = async (message) => { sent.push(message); };
   const first = await runExpiryReminders(db, { appOrigin: 'https://x', sendEmail, now });

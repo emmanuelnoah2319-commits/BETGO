@@ -24,10 +24,7 @@ const schema = z.object({
   FLW_SECRET_HASH: z.string().optional().or(z.literal('')),
   FLW_CALLBACK_URL: z.string().url().optional().or(z.literal('')),
   PRICE_SPORTYBET_NGN: z.coerce.number().positive().default(5000),
-  PRICE_FOOTBALL_COM_NGN: z.coerce.number().positive().default(5000),
-  PRICE_BETWINNER_NGN: z.coerce.number().positive().default(6000),
-  PRICE_SOKABET_NGN: z.coerce.number().positive().default(5000),
-  PRICE_MSPORT_NGN: z.coerce.number().positive().default(6000)
+  PRICE_FOOTBALL_COM_NGN: z.coerce.number().positive().default(5000)
 });
 
 export function loadConfig(source = process.env) {
@@ -81,10 +78,7 @@ export function loadConfig(source = process.env) {
     flutterwaveCallbackUrl: env.FLW_CALLBACK_URL || `${env.APP_ORIGIN}/payment/return`,
     bookmakerPricesNgn: Object.freeze({
       'SportyBet': env.PRICE_SPORTYBET_NGN,
-      'Football.com Nigeria': env.PRICE_FOOTBALL_COM_NGN,
-      'BetWinner': env.PRICE_BETWINNER_NGN,
-      'Sokabet': env.PRICE_SOKABET_NGN,
-      'MSport': env.PRICE_MSPORT_NGN
+      'Football.com Nigeria': env.PRICE_FOOTBALL_COM_NGN
     })
   });
 }

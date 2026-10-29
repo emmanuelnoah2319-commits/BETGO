@@ -35,7 +35,7 @@ test('requires bootstrap email and password together', () => {
 test('provides per-bookmaker prices and a 30-day membership default', () => {
   const config = loadConfig(base);
   assert.equal(config.bookmakerPricesNgn.SportyBet, 5000);
-  assert.equal(config.bookmakerPricesNgn.BetWinner, 6000);
+  assert.equal(config.bookmakerPricesNgn['Football.com Nigeria'], 5000);
 });
 
 const prod = { ...base, NODE_ENV: 'production', SESSION_COOKIE_SECURE: 'true', APP_ORIGIN: 'https://betgo.example.com' };

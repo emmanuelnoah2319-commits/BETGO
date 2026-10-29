@@ -21,14 +21,14 @@ test('old legacy members get 30 days from start, but never less than the grace w
   assert.equal(plan.subscriptions[0].expiresAt.getTime(), now.getTime() + 7 * day);
   const recent = { role: 'member', bookmaker: 'SportyBet', subscriptionStartedAt: new Date(now.getTime() - 2 * day) };
   assert.equal(legacyBackfillPlan(recent, now).subscriptions[0].expiresAt.getTime(), now.getTime() + 28 * day);
-  assert.equal(legacyBackfillPlan({ role: 'member', subscriptions: [{ bookmaker: 'MSport', expiresAt: now }] }, now), null);
+  assert.equal(legacyBackfillPlan({ role: 'member', subscriptions: [{ bookmaker: 'Football.com Nigeria', expiresAt: now }] }, now), null);
   assert.equal(legacyBackfillPlan({ role: 'owner', bookmaker: 'SportyBet' }, now), null);
 });
 
 test('backfill updates only members missing an expiry and is idempotent', async () => {
   const db = createFakeDb();
   db.seed('users', { emailNormalized: 'a@x.com', role: 'member', bookmaker: 'SportyBet', createdAt: new Date('2026-01-01') });
-  db.seed('users', { emailNormalized: 'b@x.com', role: 'member', subscriptions: [{ bookmaker: 'MSport', expiresAt: new Date(now.getTime() + 5 * day) }] });
+  db.seed('users', { emailNormalized: 'b@x.com', role: 'member', subscriptions: [{ bookmaker: 'Football.com Nigeria', expiresAt: new Date(now.getTime() + 5 * day) }] });
   db.seed('users', { emailNormalized: 'o@x.com', role: 'owner' });
   assert.deepEqual(await backfillLegacyExpiry(db, { now }), { checked: 2, updated: 1, skipped: 0 });
   assert.deepEqual(await backfillLegacyExpiry(db, { now }), { checked: 2, updated: 0, skipped: 0 });
