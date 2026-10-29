@@ -55,7 +55,7 @@ function renderAccount(account) {
   top.append(identity, element('span', 'pill', statusLabels[account.connectionStatus] || 'Not connected'));
   card.append(top, element('p', 'account-notes', account.notes || 'No notes added.'));
   const details = element('div', 'account-details');
-  details.append(element('span', '', `Activity: ${account.enabledForNewActivity ? 'enabled' : 'disabled'}`), element('span', '', 'Balance: not available'));
+  details.append(element('span', '', `Activity: ${account.enabledForNewActivity ? 'enabled' : 'disabled'}`), element('span', '', account.balanceMinor == null ? 'Balance: not synced' : `Balance: ${account.currency || '₦'} ${koboToNaira(account.balanceMinor)}`));
   const actions = element('div', 'account-actions'); const edit = element('button', 'button-secondary', 'Edit details');
   edit.type = 'button'; edit.addEventListener('click', () => openEditForm(account, card)); actions.append(edit);
   const checkedText = account.lastCheckedAt ? `Last checked ${new Date(account.lastCheckedAt).toLocaleString()}` : 'Never checked';
@@ -230,6 +230,7 @@ $('#load-sportybet-fixtures').addEventListener('click', async () => {
           use.addEventListener('click', () => {
             const account = [...$('#instruction-account').options].find((option) => option.value && option.textContent.includes('SportyBet'));
             if (account) $('#instruction-account').value = account.value;
+            else { showMessage('instruction-message', 'Add a SportyBet account record first; these odds can only be used with one.', true); return; }
             $('#instruction-event').value = `${fixture.homeTeam} vs ${fixture.awayTeam}`.slice(0, 160);
             selectedOddsDecimal = price; selectedOddsFetchedAt = result.fetchedAt || null; selectedProviderSelection = { eventId: fixture.eventId, marketId: market.marketId, outcomeId: outcome.outcomeId };
             $('#instruction-odds').value = price.toFixed(2);

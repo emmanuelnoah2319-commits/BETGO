@@ -17,6 +17,7 @@ import { CANCELLABLE_INSTRUCTION_STATUSES, transitionInstructionStatus } from '.
 import { recoverPendingReservationReleases, releaseInstructionReservation } from './services/instruction-reservations.js';
 import { getOperationalControl, setEmergencyStop } from './services/operational-control.js';
 import { sendEmail } from './services/notifications.js';
+import { oddsSourceBlock } from './services/ticket-rules.js';
 import { escapeRegex, manageBlock, publicUser } from './services/user-admin.js';
 import { MIN_PASSWORD_LENGTH, completePasswordReset, requestPasswordReset } from './services/password-reset.js';
 import { initializeFlutterwavePayment, verifyFlutterwavePayment } from './services/payments.js';
@@ -802,6 +803,8 @@ app.post('/api/bet-instructions', csrfProtection, requireAuthLazy, async (req, r
     const account = await db.collection('bettingAccounts').findOne({ _id: accountId, ownerUserId: req.user._id });
     if (!account) return res.status(404).json({ error: { code: 'ACCOUNT_NOT_FOUND', message: 'Account record not found.' } });
     if (!canUseBookmaker(req.user, account.platform)) return res.status(403).json({ error: { code: 'BOOKMAKER_NOT_IN_SUBSCRIPTION', message: 'This account is outside your subscribed bookmaker.' } });
+    const sourceBlock = oddsSourceBlock({ accountPlatform: account.platform, hasProviderSelection: Boolean(input.eventId) });
+    if (sourceBlock) return res.status(sourceBlock.status).json({ error: { code: sourceBlock.code, message: sourceBlock.message } });
     const policies = db.collection('safetyPolicies');
     await policies.updateOne({ ownerUserId: req.user._id }, { $setOnInsert: { ...DEFAULT_SAFETY_POLICY, ownerUserId: req.user._id, openInstructionCount: 0, createdAt: new Date() } }, { upsert: true });
     await policies.updateOne({ ownerUserId: req.user._id, openInstructionCount: { $exists: false } }, { $set: { openInstructionCount: 0 } });
@@ -922,6 +925,7 @@ app.get('/api/integrations', requireAuthLazy, (_req, res) => {
 // Read-only SportyBet public web-data adapter. This does not authenticate an account or place wagers.
 app.get('/api/sportybet/fixtures', requireAuthLazy, async (req, res) => {
   try {
+    if (!canUseBookmaker(req.user, 'SportyBet')) return res.status(403).json({ error: { code: 'BOOKMAKER_NOT_IN_SUBSCRIPTION', message: 'SportyBet data is part of the SportyBet subscription.' } });
     const limit = req.query.limit === undefined ? 30 : Number(req.query.limit);
     const timeline = req.query.timeline === undefined ? 168 : Number(req.query.timeline);
     if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !Number.isInteger(timeline) || timeline < 1 || timeline > 720) {
@@ -937,6 +941,7 @@ app.get('/api/sportybet/fixtures', requireAuthLazy, async (req, res) => {
 
 app.get('/api/sportybet/events/:eventId/markets', requireAuthLazy, async (req, res) => {
   try {
+    if (!canUseBookmaker(req.user, 'SportyBet')) return res.status(403).json({ error: { code: 'BOOKMAKER_NOT_IN_SUBSCRIPTION', message: 'SportyBet data is part of the SportyBet subscription.' } });
     const data = await sportyBetDataClient.getMarkets(req.params.eventId);
     res.setHeader('Cache-Control', 'no-store');
     res.json(data);
