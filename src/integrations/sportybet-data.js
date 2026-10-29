@@ -40,11 +40,13 @@ function normalizeEvent(event, tournament) {
       marketName: String(market.desc || ''),
       specifier: market.specifier == null ? '' : String(market.specifier),
       status: String(market.status || 'unknown'),
+      rawStatus: market.status ?? null,
       outcomes: Array.isArray(market.outcomes) ? market.outcomes.map((outcome) => ({
         outcomeId: String(outcome.id ?? ''),
         name: String(outcome.desc || ''),
         odds: typeof outcome.odds === 'string' || typeof outcome.odds === 'number' ? String(outcome.odds) : null,
-        active: outcome.isActive === true
+        active: outcome.isActive === true,
+        rawActive: outcome.isActive ?? null
       })) : []
     })) : []
   };
