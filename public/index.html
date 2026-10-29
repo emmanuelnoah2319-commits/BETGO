@@ -76,8 +76,10 @@
       </div>
       <section id="accounts-section" data-view="accounts" class="panel dashboard-section">
         <div class="panel-heading"><div><p class="eyebrow">ACCOUNT RECORDS</p><h2>Connected Accounts</h2></div><span class="pill">Not connected</span></div>
-        <p class="muted account-warning">Add labels and private notes for your accounts. Do not enter bookmaker passwords, OTPs, recovery codes or payment details here.</p>
-        <p class="field-hint">These are reference records only. SportyBet account verification is not available yet; BETGO is not signed in to these bookmaker accounts.</p>
+
+        <p class="muted account-warning">Account labels and notes are separate from imported SportyBet sessions. Never enter bookmaker passwords, OTPs, recovery codes or payment details.</p>
+<p class="field-hint">Wager execution is disabled by default. Imported sessions are encrypted, but are not verified until a guarded execution attempt.</p>
+        
         <form id="account-form" class="account-form">
           <div class="form-grid">
             <div><label for="account-name">Account label</label><input id="account-name" name="displayName" required maxlength="60" placeholder="e.g. Main SportyBet"></div>
@@ -108,6 +110,20 @@
         <div id="markets-list" class="markets-list"></div>
       </section>
       <section id="ticket-section" data-view="betting" class="panel dashboard-section">
+        <section id="instructions-section" data-view="betting" class="panel dashboard-section">
+  <div class="panel-heading">
+    <div>
+      <p class="eyebrow">WAGER CONFIRMATION</p>
+      <h2>Saved instructions</h2>
+    </div>
+    <button id="refresh-instructions" class="button-secondary" type="button">Refresh</button>
+  </div>
+  <p class="field-hint">Submitting is one-shot per account. Unknown results must be reconciled in SportyBet Bet History before any manual retry. Hector currently supports single selections only.</p>
+  <p id="instructions-message" role="status" hidden></p>
+  <div id="instructions-list" class="account-list" aria-live="polite">
+    <p class="empty-state">Loading saved instructions…</p>
+  </div>
+        </section>
         <div class="panel-heading"><div><p class="eyebrow">BET TICKET</p><h2>Your ticket</h2></div><span id="ticket-count" class="pill">0 selections</span></div>
         <div id="ticket-legs" class="ticket-legs"><p class="empty-state">No selections yet. Search for a game and tap an odd to add it.</p></div>
         <form id="ticket-form" class="account-form" novalidate>
