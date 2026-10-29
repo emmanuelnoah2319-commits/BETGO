@@ -114,7 +114,7 @@
           <label for="ticket-account">SportyBet account record</label>
           <select id="ticket-account" required></select>
           <div class="form-grid">
-            <div><label for="ticket-stake">Stake (₦)</label><input id="ticket-stake" inputmode="decimal" autocomplete="off" placeholder="e.g. 5000"></div>
+            <div><label for="ticket-stake">Stake (₦) – automatic</label><input id="ticket-stake" readonly autocomplete="off" placeholder="Fills in from max profit"></div>
             <div><label for="ticket-max-profit">Max profit (₦)</label><input id="ticket-max-profit" inputmode="decimal" autocomplete="off" placeholder="e.g. 20000"></div>
           </div>
           <p class="field-hint">If the stake would win more than your max profit, the stake is lowered automatically so the profit stays within it. It is never raised.</p>

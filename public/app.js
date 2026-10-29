@@ -468,7 +468,19 @@ function currentSummary() {
   return summarizeTicket({ oddsList: ticket.legs.map((leg) => leg.oddsDecimal), stakeMinor: nairaToMinor($('#ticket-stake').value), maxNetProfitMinor: nairaToMinor($('#ticket-max-profit').value) });
 }
 
+// The stake is not typed. It is the largest stake whose profit stays within the max profit at the current odds.
+function syncAutoStake() {
+  const stakeBox = $('#ticket-stake');
+  const profitMinor = nairaToMinor($('#ticket-max-profit').value);
+  const odds = ticket.legs.length ? combinedOdds(ticket.legs.map((leg) => leg.oddsDecimal)) : 0;
+  if (profitMinor === null || profitMinor < 100 || !(odds > 1)) { stakeBox.value = ''; return; }
+  let stake = Math.floor(profitMinor / (odds - 1));
+  while (stake > 0 && Math.floor(stake * (odds - 1)) > profitMinor) stake -= 1;
+  stakeBox.value = stake >= 100 ? (stake / 100).toFixed(2) : '';
+}
+
 function updateTicketSummary() {
+  syncAutoStake();
   const summary = ticket.legs.length ? currentSummary() : null; const list = $('#ticket-summary'); list.replaceChildren();
   const hint = $('#ticket-hint'); hint.classList.remove('form-error');
   const submit = $('#ticket-submit');
@@ -477,16 +489,15 @@ function updateTicketSummary() {
   const row = (label, value, className) => { const wrap = element('div', className); wrap.append(element('dt', '', label), element('dd', '', value)); list.append(wrap); };
   if (summary.combinedOdds) row(ticket.legs.length > 1 ? 'Combined odds' : 'Odds', summary.combinedOdds.toFixed(2));
   if (summary.error) {
-    list.hidden = !summary.combinedOdds; hint.textContent = summary.error; submit.disabled = true;
+    list.hidden = !summary.combinedOdds; hint.textContent = /^Enter a stake/.test(summary.error) ? 'Enter your max profit and the stake fills in automatically.' : summary.error; submit.disabled = true;
     if (nairaToMinor($('#ticket-stake').value) !== null && nairaToMinor($('#ticket-max-profit').value) !== null) hint.classList.add('form-error');
     return;
   }
   const enteredMinor = nairaToMinor($('#ticket-stake').value);
-  row('Stake you entered', minorToNaira(enteredMinor));
-  row('Stake that will be used', minorToNaira(summary.effectiveStakeMinor), summary.stakeAdjusted ? 'adjusted' : '');
+  row('Stake (automatic)', minorToNaira(summary.effectiveStakeMinor), summary.stakeAdjusted ? 'adjusted' : '');
   row('Potential profit', minorToNaira(summary.potentialNetProfitMinor)); row('Potential return', minorToNaira(summary.potentialReturnMinor));
   list.hidden = false;
-  hint.textContent = summary.stakeAdjusted ? `Stake lowered from ${minorToNaira(enteredMinor)} to ${minorToNaira(summary.effectiveStakeMinor)} so the profit stays within your ${minorToNaira(nairaToMinor($('#ticket-max-profit').value))} cap.` : 'Profit is within your cap, so your stake is unchanged. Profit excludes the stake you get back.';
+  hint.textContent = summary.stakeAdjusted ? `Stake lowered from ${minorToNaira(enteredMinor)} to ${minorToNaira(summary.effectiveStakeMinor)} so the profit stays within your ${minorToNaira(nairaToMinor($('#ticket-max-profit').value))} cap.` : 'Stake is worked out from your max profit and the current odds. Profit excludes the stake you get back.';
   submit.disabled = !$('#ticket-account').value;
   if (!$('#ticket-account').value) hint.textContent = 'Add a SportyBet account record in Accounts, then pick it here.';
 }
