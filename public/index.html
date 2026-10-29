@@ -37,6 +37,19 @@
         <p id="login-error" class="form-error" role="alert" hidden></p>
         <button type="submit" id="login-button">Sign in <span aria-hidden="true">→</span></button>
       </form>
+      <p class="small"><button type="button" id="forgot-toggle" class="button-secondary">Forgot your password?</button></p>
+      <form id="forgot-form" class="account-form" hidden>
+        <label for="forgot-email">Email address</label><input id="forgot-email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com">
+        <button id="forgot-button" type="submit">Email me a reset link</button>
+      </form>
+      <p id="forgot-message" role="status" hidden></p>
+      <form id="reset-form" class="account-form" hidden>
+        <p class="eyebrow">CHOOSE A NEW PASSWORD</p>
+        <label for="reset-password">New password (at least 12 characters)</label><input id="reset-password" type="password" autocomplete="new-password" required minlength="12" maxlength="1024">
+        <label for="reset-confirm">Confirm new password</label><input id="reset-confirm" type="password" autocomplete="new-password" required minlength="12" maxlength="1024">
+        <button id="reset-button" type="submit">Set new password</button>
+      </form>
+      <p id="reset-message" role="status" hidden></p>
       <p class="muted small">Members sign in here. New users must apply and wait for admin review.</p>
       <div class="application-box">
         <div class="panel-heading"><div><p class="eyebrow">NEW MEMBER</p><h3>Apply for access</h3></div></div>

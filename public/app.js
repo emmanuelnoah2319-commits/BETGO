@@ -291,3 +291,34 @@ function renderRenewals(subscriptions) {
     box.append(button);
   }
 }
+
+// Password reset. The token arrives in the URL fragment; it is read once, then removed from the address bar.
+let resetToken = null;
+function readResetTokenFromUrl() {
+  const match = /^#reset=([A-Za-z0-9_-]{43})$/.exec(window.location.hash);
+  if (!match) return;
+  resetToken = match[1];
+  history.replaceState(null, '', window.location.pathname + window.location.search);
+  $('#reset-form').hidden = false;
+  $('#login-form').hidden = true;
+  $('#forgot-toggle').hidden = true;
+}
+$('#forgot-toggle').addEventListener('click', () => { $('#forgot-form').hidden = !$('#forgot-form').hidden; if (!$('#forgot-form').hidden) $('#forgot-email').focus(); });
+$('#forgot-form').addEventListener('submit', async (event) => {
+  event.preventDefault(); const button = $('#forgot-button'); button.disabled = true; button.textContent = 'Sending…'; showMessage('forgot-message');
+  try { const result = await mutate('/api/auth/forgot-password', 'POST', { email: $('#forgot-email').value.trim() }); showMessage('forgot-message', result.message); $('#forgot-form').reset(); }
+  catch (error) { showMessage('forgot-message', error.message, true); }
+  finally { button.disabled = false; button.textContent = 'Email me a reset link'; }
+});
+$('#reset-form').addEventListener('submit', async (event) => {
+  event.preventDefault(); showMessage('reset-message');
+  if ($('#reset-password').value !== $('#reset-confirm').value) return showMessage('reset-message', 'The two passwords do not match.', true);
+  const button = $('#reset-button'); button.disabled = true; button.textContent = 'Saving…';
+  try {
+    const result = await mutate('/api/auth/reset-password', 'POST', { token: resetToken, newPassword: $('#reset-password').value });
+    $('#reset-form').reset(); $('#reset-form').hidden = true; resetToken = null; $('#login-form').hidden = false; $('#forgot-toggle').hidden = false;
+    showMessage('reset-message', result.message);
+  } catch (error) { showMessage('reset-message', error.message, true); }
+  finally { button.disabled = false; button.textContent = 'Set new password'; }
+});
+readResetTokenFromUrl();

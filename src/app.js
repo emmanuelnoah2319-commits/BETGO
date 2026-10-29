@@ -16,6 +16,7 @@ import { CANCELLABLE_INSTRUCTION_STATUSES, transitionInstructionStatus } from '.
 import { recoverPendingReservationReleases, releaseInstructionReservation } from './services/instruction-reservations.js';
 import { getOperationalControl, setEmergencyStop } from './services/operational-control.js';
 import { sendEmail } from './services/notifications.js';
+import { MIN_PASSWORD_LENGTH, completePasswordReset, requestPasswordReset } from './services/password-reset.js';
 import { initializeFlutterwavePayment, verifyFlutterwavePayment } from './services/payments.js';
 import { capStakeToNetProfit } from './services/profit-cap.js';
 import { OPEN_APPLICATION_STATUSES, allowedBookmakers, applicationBlock, canUseBookmaker, grantSubscription, hasSubscriptionRecord, latestExpiry, publicSubscriptions, subscriptionsOf } from './services/subscriptions.js';
@@ -181,6 +182,34 @@ app.post('/api/auth/login', authLimiter, csrfProtection, async (req, res, next) 
     });
     res.setHeader('Cache-Control', 'no-store');
     res.json({ user: result.user, expiresAt: result.expiresAt });
+  } catch (error) { next(error); }
+});
+
+const forgotPasswordSchema = z.object({ email: z.string().trim().email().max(254) }).strict();
+const resetPasswordSchema = z.object({ token: z.string().regex(/^[A-Za-z0-9_-]{43}$/), newPassword: z.string().min(MIN_PASSWORD_LENGTH).max(1024) }).strict();
+
+// Same response whether or not the email has an account, so the form cannot be used to discover who is a member.
+app.post('/api/auth/forgot-password', authLimiter, csrfProtection, async (req, res) => {
+  const parsed = forgotPasswordSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Enter a valid email address.' } });
+  res.status(202).json({ message: 'If an account exists for that email, a reset link is on its way. It expires in 30 minutes.' });
+  try {
+    const config = req.app.locals.config;
+    await requestPasswordReset(req.app.locals.db, { email: parsed.data.email, appOrigin: config.appOrigin, requestId: req.requestId, sendEmail: (message) => sendEmail(config, message) });
+  } catch (error) {
+    console.error(JSON.stringify({ level: 'error', event: 'password_reset_request_failed', requestId: req.requestId, errorCode: error?.code || null }));
+  }
+});
+
+app.post('/api/auth/reset-password', authLimiter, csrfProtection, async (req, res, next) => {
+  try {
+    const parsed = resetPasswordSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: `Choose a new password of at least ${MIN_PASSWORD_LENGTH} characters.` } });
+    const result = await completePasswordReset(req.app.locals.db, { token: parsed.data.token, newPassword: parsed.data.newPassword, hashPassword: (value) => argon2.hash(value, { type: argon2.argon2id }), requestId: req.requestId });
+    if (!result) return res.status(400).json({ error: { code: 'RESET_LINK_INVALID', message: 'This reset link is invalid, expired or already used. Request a new one.' } });
+    res.clearCookie(req.app.locals.config.cookieName, { httpOnly: true, secure: req.app.locals.config.cookieSecure, sameSite: 'strict', path: '/' });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ message: 'Password updated. Sign in with your new password.' });
   } catch (error) { next(error); }
 });
 
