@@ -162,6 +162,7 @@ export function createSportyBetDataClient({
   async function loadSearchPages() {
     const first = await getFixtures({ limit: SEARCH_PAGE_SIZE, timeline: 720, pageNum: 1 });
     const pages = [first];
+    pages.diag = { upstreamTotal: first.total, firstPage: first.fixtures.length, failedPages: 0 };
     const total = Number(first.total);
     const lastPage = Number.isFinite(total) && total > first.fixtures.length
       ? Math.min(SEARCH_MAX_PAGES, Math.ceil(total / SEARCH_PAGE_SIZE))
@@ -169,6 +170,7 @@ export function createSportyBetDataClient({
     for (let start = 2; start <= lastPage; start += SEARCH_CHUNK) {
       const numbers = Array.from({ length: Math.min(SEARCH_CHUNK, lastPage - start + 1) }, (_, index) => start + index);
       const batch = await Promise.all(numbers.map((pageNum) => getFixtures({ limit: SEARCH_PAGE_SIZE, timeline: 720, pageNum }).catch(() => null)));
+      pages.diag.failedPages += batch.filter((page) => !page).length;
       pages.push(...batch.filter(Boolean));
       if (batch.some((page) => page && page.fixtures.length === 0)) break; // ran past the last page
     }
@@ -200,7 +202,7 @@ export function createSportyBetDataClient({
     matches.sort((a, b) => (Number(b.isLive) - Number(a.isLive)) || String(a.startTime).localeCompare(String(b.startTime)));
     return {
       provider: 'SportyBet', query: text, fetchedAt: new Date(now()).toISOString(), fixtures: matches.slice(0, SEARCH_MAX_RESULTS),
-      truncated: matches.length > SEARCH_MAX_RESULTS, liveAvailable: live !== null, scanned,
+      truncated: matches.length > SEARCH_MAX_RESULTS, liveAvailable: live !== null, scanned, diag: { ...pages.diag, pagesLoaded: pages.length, live: live ? live.fixtures.length : null },
       notice: 'Unofficial public web API. Odds can change at any time. No wager was placed.'
     };
   }
