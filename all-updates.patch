@@ -1,63 +1,201 @@
 diff --git a/public/app.js b/public/app.js
 --- a/public/app.js
 +++ b/public/app.js
-@@ -449,13 +449,15 @@
+@@ -9,3 +9,3 @@
+ let liveRefreshing = false;
+-const LIVE_REFRESH_MS = 5000;
++const LIVE_REFRESH_MS = 1000;
+ const ticket = { legs: [], submitKey: null, submitPayload: null };
+@@ -329,5 +329,21 @@
+   const wrap = element('span', 'live-badge');
+-  wrap.append(element('span', 'live-dot'), document.createTextNode(['LIVE', game.score, game.clock].filter(Boolean).join(' · ')));
++  wrap.dataset.eventId = game.eventId || '';
++  wrap.append(element('span', 'live-dot'), document.createTextNode(''));
++  setBadge(wrap, game);
+   return wrap;
+ }
++// A live badge remembers when its clock was read, so it can count on by itself between server updates.
++function setBadge(wrap, game) {
++  wrap.dataset.score = game.score || ''; wrap.dataset.clock = game.clock || ''; wrap.dataset.status = game.matchStatus || ''; wrap.dataset.at = String(Date.now());
++  paintBadge(wrap);
++}
++function paintBadge(wrap) {
++  let clock = wrap.dataset.clock || '';
++  const parts = /^(\d+):(\d{2})$/.exec(clock);
++  if (parts && !/half\s*time|break|pause|end|interrupt/i.test(wrap.dataset.status || '')) {
++    const seconds = Number(parts[1]) * 60 + Number(parts[2]) + Math.floor((Date.now() - Number(wrap.dataset.at)) / 1000);
++    clock = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
++  }
++  wrap.lastChild.textContent = ['LIVE', wrap.dataset.score, clock].filter(Boolean).join(' · ');
++}
  
- // Ticket selections on the open game follow its odds every second.
- function syncLegsFromOpenGame(game) {
--  let changed = false;
+@@ -343,3 +359,13 @@
+     liveRefreshing = true; // never stack a new request on a slow one
+-    try { const fresh = await fetchGame(eventId); if (openGame?.eventId === eventId) { openGame = fresh; renderMarkets(); if (!fresh.isLive) stopLiveRefresh(); } } catch { /* keep the last odds on screen; the next tick retries */ }
++    try {
++      const fresh = await fetchGame(eventId);
++      if (openGame?.eventId === eventId) {
++        const changed = JSON.stringify(fresh.markets) !== JSON.stringify(openGame.markets) || fresh.score !== openGame.score || fresh.isLive !== openGame.isLive || fresh.complete !== openGame.complete;
++        openGame = fresh;
++        if (changed) renderMarkets(); else updateMarketsMeta();
++        for (const badge of document.querySelectorAll(`.live-badge[data-event-id="${eventId}"]`)) setBadge(badge, fresh);
++        syncLegsFromOpenGame(fresh);
++        if (!fresh.isLive) stopLiveRefresh();
++      }
++    } catch { /* keep the last odds on screen; the next tick retries */ }
+     finally { liveRefreshing = false; }
+@@ -348,2 +374,16 @@
+ 
++setInterval(() => { if (!document.hidden) for (const badge of document.querySelectorAll('.live-badge[data-at]')) paintBadge(badge); }, 1000);
++let liveCardsRefreshing = false;
++setInterval(async () => {
++  const badges = [...document.querySelectorAll('.live-badge[data-event-id]')];
++  if (liveCardsRefreshing || document.hidden || !badges.length) return;
++  liveCardsRefreshing = true;
++  try {
++    const data = await request('/api/sportybet/live');
++    const byId = new Map(data.fixtures.map((game) => [game.eventId, game]));
++    for (const badge of badges) { const game = byId.get(badge.dataset.eventId); if (game && badge.dataset.eventId !== openGame?.eventId) setBadge(badge, game); }
++  } catch { /* keep what is on screen; the next tick retries */ }
++  finally { liveCardsRefreshing = false; }
++}, 5000);
++
+ function resetWorkspace() {
+@@ -403,2 +443,21 @@
+ 
++function updateMarketsMeta() {
++  if (!openGame) return;
++  const when = openGame.isLive ? ['In play', openGame.score, openGame.clock].filter(Boolean).join(' · ') : `Kick-off ${kickoffText(openGame.startTime)}`;
++  $('#markets-meta').textContent = `${when} · odds fetched ${new Date(openGame.fetchedAt).toLocaleTimeString()}${openGame.isLive ? ` · updates every ${LIVE_REFRESH_MS / 1000} seconds` : ''} · tap an odd to add it to your ticket.`;
++}
++
++// Ticket selections on the open game follow its odds every second.
++function syncLegsFromOpenGame(game) {
 +  let changed = false; let removed = 0;
-   for (const leg of ticket.legs.filter((item) => item.eventId === game.eventId)) {
-     const market = activeMarket(game.markets, leg);
-     const outcome = market?.outcomes.find((item) => item.outcomeId === leg.outcomeId && usableOdds(item));
-     if (outcome && Math.abs(Number(outcome.odds) - leg.oddsDecimal) > 0.000001) { leg.oddsDecimal = Number(outcome.odds); changed = true; }
++  for (const leg of ticket.legs.filter((item) => item.eventId === game.eventId)) {
++    const market = activeMarket(game.markets, leg);
++    const outcome = market?.outcomes.find((item) => item.outcomeId === leg.outcomeId && usableOdds(item));
++    if (outcome && Math.abs(Number(outcome.odds) - leg.oddsDecimal) > 0.000001) { leg.oddsDecimal = Number(outcome.odds); changed = true; }
 +    else if (!outcome) { ticket.legs = ticket.legs.filter((item) => item !== leg); removed += 1; changed = true; }
-   }
--  if (changed) renderTicket();
++  }
 +  if (removed) showMessage('ticket-message', `${removed} selection(s) removed because SportyBet closed them.`, true);
 +  if (changed) { renderMarkets(); renderTicket(); }
- }
- 
++}
++
  function renderMarkets() {
-@@ -560,8 +562,8 @@
- $('#ticket-clear').addEventListener('click', () => { ticket.legs = []; showMessage('ticket-message'); renderMarkets(); renderTicket(); });
+@@ -407,4 +466,3 @@
+   $('#markets-eyebrow').textContent = openGame.isLive ? 'LIVE ODDS' : 'ODDS';
+-  const when = openGame.isLive ? ['In play', openGame.score, openGame.clock].filter(Boolean).join(' · ') : `Kick-off ${kickoffText(openGame.startTime)}`;
+-  $('#markets-meta').textContent = `${when} · odds fetched ${new Date(openGame.fetchedAt).toLocaleTimeString()}${openGame.isLive ? ` · updates every ${LIVE_REFRESH_MS / 1000} seconds` : ''} · tap an odd to add it to your ticket.`;
++  updateMarketsMeta();
+   const notices = [];
+@@ -469,3 +527,15 @@
  
++// The stake is not typed. It is the largest stake whose profit stays within the max profit at the current odds.
++function syncAutoStake() {
++  const stakeBox = $('#ticket-stake');
++  const profitMinor = nairaToMinor($('#ticket-max-profit').value);
++  const odds = ticket.legs.length ? combinedOdds(ticket.legs.map((leg) => leg.oddsDecimal)) : 0;
++  if (profitMinor === null || profitMinor < 100 || !(odds > 1)) { stakeBox.value = ''; return; }
++  let stake = Math.floor(profitMinor / (odds - 1));
++  while (stake > 0 && Math.floor(stake * (odds - 1)) > profitMinor) stake -= 1;
++  stakeBox.value = stake >= 100 ? (stake / 100).toFixed(2) : '';
++}
++
+ function updateTicketSummary() {
++  syncAutoStake();
+   const summary = ticket.legs.length ? currentSummary() : null; const list = $('#ticket-summary'); list.replaceChildren();
+@@ -478,3 +548,3 @@
+   if (summary.error) {
+-    list.hidden = !summary.combinedOdds; hint.textContent = summary.error; submit.disabled = true;
++    list.hidden = !summary.combinedOdds; hint.textContent = /^Enter a stake/.test(summary.error) ? 'Enter your max profit and the stake fills in automatically.' : summary.error; submit.disabled = true;
+     if (nairaToMinor($('#ticket-stake').value) !== null && nairaToMinor($('#ticket-max-profit').value) !== null) hint.classList.add('form-error');
+@@ -483,7 +553,6 @@
+   const enteredMinor = nairaToMinor($('#ticket-stake').value);
+-  row('Stake you entered', minorToNaira(enteredMinor));
+-  row('Stake that will be used', minorToNaira(summary.effectiveStakeMinor), summary.stakeAdjusted ? 'adjusted' : '');
++  row('Stake (automatic)', minorToNaira(summary.effectiveStakeMinor), summary.stakeAdjusted ? 'adjusted' : '');
+   row('Potential profit', minorToNaira(summary.potentialNetProfitMinor)); row('Potential return', minorToNaira(summary.potentialReturnMinor));
+   list.hidden = false;
+-  hint.textContent = summary.stakeAdjusted ? `Stake lowered from ${minorToNaira(enteredMinor)} to ${minorToNaira(summary.effectiveStakeMinor)} so the profit stays within your ${minorToNaira(nairaToMinor($('#ticket-max-profit').value))} cap.` : 'Profit is within your cap, so your stake is unchanged. Profit excludes the stake you get back.';
++  hint.textContent = summary.stakeAdjusted ? `Stake lowered from ${minorToNaira(enteredMinor)} to ${minorToNaira(summary.effectiveStakeMinor)} so the profit stays within your ${minorToNaira(nairaToMinor($('#ticket-max-profit').value))} cap.` : 'Stake is worked out from your max profit and the current odds. Profit excludes the stake you get back.';
+   submit.disabled = !$('#ticket-account').value;
+@@ -495,4 +564,4 @@
  // Re-reads every game on the ticket and updates odds. Selections that closed or whose game started are removed.
 -async function refreshTicketOdds() {
 -  const ids = [...new Set(ticket.legs.map((leg) => leg.eventId))]; const notes = { changed: 0, removed: 0 };
 +async function refreshTicketOdds(skipEventId = null, quiet = false) {
 +  const ids = [...new Set(ticket.legs.map((leg) => leg.eventId))].filter((id) => id !== skipEventId); const notes = { changed: 0, removed: 0 };
    for (const eventId of ids) {
-     let game = null;
-     try { game = await fetchGame(eventId); } catch { /* an unreadable game is treated as closed below */ }
-@@ -573,7 +575,7 @@
-       if (Math.abs(Number(outcome.odds) - leg.oddsDecimal) > 0.000001) { leg.oddsDecimal = Number(outcome.odds); notes.changed += 1; }
-     }
+@@ -508,3 +577,3 @@
    }
 -  renderMarkets(); renderTicket();
 +  if (!quiet || notes.changed || notes.removed) { renderMarkets(); renderTicket(); }
    return notes;
- }
- $('#ticket-refresh').addEventListener('click', async () => {
-@@ -582,16 +584,17 @@
-   finally { updateTicketSummary(); }
- });
+@@ -517,2 +586,17 @@
  
--// Ticket odds follow SportyBet on their own: every 10 s while the ticket is on screen. A closed market drops its selection.
--const TICKET_REFRESH_MS = 10000;
 +// Ticket odds follow SportyBet on their own: every second while the ticket is on screen. A closed market drops its selection.
 +// The game that is open and live is already refreshed every second above, so it is skipped here.
 +const TICKET_REFRESH_MS = 1000;
- let ticketAutoRefreshing = false;
- setInterval(async () => {
-   if (ticketAutoRefreshing || document.hidden || !ticket.legs.length || $('#ticket-form').offsetParent === null) return;
-   if ($('#ticket-submit').textContent === 'Checking odds…' || $('#ticket-refresh').disabled) return; // not while saving or refreshing by hand
-   ticketAutoRefreshing = true;
-   try {
--    const notes = await refreshTicketOdds();
--    if (notes.changed || notes.removed) showMessage('ticket-message', `Odds updated: ${notes.changed} changed, ${notes.removed} removed.`, notes.removed > 0);
++let ticketAutoRefreshing = false;
++setInterval(async () => {
++  if (ticketAutoRefreshing || document.hidden || !ticket.legs.length || $('#ticket-form').offsetParent === null) return;
++  if ($('#ticket-submit').textContent === 'Checking odds…' || $('#ticket-refresh').disabled) return; // not while saving or refreshing by hand
++  ticketAutoRefreshing = true;
++  try {
 +    const notes = await refreshTicketOdds(liveTimer ? openGame?.eventId : null, true);
 +    if (notes.removed) showMessage('ticket-message', `${notes.removed} selection(s) removed because SportyBet closed them.`, true);
-   } catch { /* keep the current odds; the next tick retries */ }
-   finally { ticketAutoRefreshing = false; }
- }, TICKET_REFRESH_MS);
++  } catch { /* keep the current odds; the next tick retries */ }
++  finally { ticketAutoRefreshing = false; }
++}, TICKET_REFRESH_MS);
++
+ $('#ticket-form').addEventListener('submit', async (event) => {
+diff --git a/public/index.html b/public/index.html
+--- a/public/index.html
++++ b/public/index.html
+@@ -116,3 +116,3 @@
+           <div class="form-grid">
+-            <div><label for="ticket-stake">Stake (₦)</label><input id="ticket-stake" inputmode="decimal" autocomplete="off" placeholder="e.g. 5000"></div>
++            <div><label for="ticket-stake">Stake (₦) – automatic</label><input id="ticket-stake" readonly autocomplete="off" placeholder="Fills in from max profit"></div>
+             <div><label for="ticket-max-profit">Max profit (₦)</label><input id="ticket-max-profit" inputmode="decimal" autocomplete="off" placeholder="e.g. 20000"></div>
+diff --git a/src/app.js b/src/app.js
+--- a/src/app.js
++++ b/src/app.js
+@@ -91,8 +91,9 @@
+ 
++// No spending limits: these values are so high that they never block a ticket.
+ const DEFAULT_SAFETY_POLICY = Object.freeze({
+-  maxStakeMinor: 500_000,
+-  dailyStakeLimitMinor: 2_000_000,
+-  dailyLossLimitMinor: 1_000_000,
+-  perAccountDailyStakeLimitMinor: 750_000,
+-  maxOpenInstructions: 5
++  maxStakeMinor: 1_000_000_000_000_000,
++  dailyStakeLimitMinor: 1_000_000_000_000_000,
++  dailyLossLimitMinor: 1_000_000_000_000_000,
++  perAccountDailyStakeLimitMinor: 1_000_000_000_000_000,
++  maxOpenInstructions: 1_000_000
+ });
+@@ -781,5 +782,4 @@
+ function publicSafetyPolicy(saved) {
+-  const policy = { ...DEFAULT_SAFETY_POLICY };
+-  if (saved) for (const key of Object.keys(DEFAULT_SAFETY_POLICY)) if (Number.isInteger(saved[key])) policy[key] = saved[key];
+-  return policy;
++  // Limits saved by earlier versions are ignored on purpose, so an old cap can never block a ticket.
++  return { ...DEFAULT_SAFETY_POLICY };
+ }
+@@ -990,2 +990,14 @@
+   }
++});
++
++// Scores and clocks of games that are in play right now (one shared, briefly cached read).
++app.get('/api/sportybet/live', requireAuthLazy, async (req, res) => {
++  try {
++    if (!canUseBookmaker(req.user, 'SportyBet')) return res.status(403).json({ error: { code: 'BOOKMAKER_NOT_IN_SUBSCRIPTION', message: 'SportyBet data is part of the SportyBet subscription.' } });
++    const data = await sportyBetDataClient.getLiveFixtures();
++    res.setHeader('Cache-Control', 'no-store');
++    res.json({ fetchedAt: data.fetchedAt, fixtures: data.fixtures.map(({ eventId, score, clock, matchStatus, isLive }) => ({ eventId, score, clock, matchStatus, isLive })) });
++  } catch (error) {
++    res.status(error.status || 502).json({ error: { code: error.code || 'SPORTYBET_UNAVAILABLE', message: error.message || 'SportyBet data is temporarily unavailable.' } });
++  }
+ });
