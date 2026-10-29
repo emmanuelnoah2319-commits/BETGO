@@ -299,6 +299,8 @@ function showView(view) {
   const views = availableViews();
   activeView = views.includes(view) ? view : views[0];
   for (const name of VIEW_ORDER) for (const node of viewSections(name)) node.classList.toggle('view-off', name !== activeView);
+  const titles = { overview: 'Overview', betting: 'Betting', accounts: 'Accounts', applications: 'Applications', members: 'Members', operations: 'Operations' };
+  $('#page-title').textContent = titles[activeView] || 'Dashboard';
   for (const tab of document.querySelectorAll('#view-nav [data-tab]')) {
     tab.hidden = !views.includes(tab.dataset.tab);
     const current = tab.dataset.tab === activeView; tab.classList.toggle('active', current);

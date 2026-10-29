@@ -121,3 +121,53 @@ textarea { min-height: 90px; }
 .live-dot { width: 7px; height: 7px; border-radius: 50%; background: #ff5560; }
 @media (prefers-reduced-motion: no-preference) { .live-dot { animation: live-pulse 1.4s ease-in-out infinite; } }
 @keyframes live-pulse { 50% { opacity: .35; } }
+
+/* ===== App layout v2: signed-out landing, signed-in sidebar app, two-column betting page ===== */
+.topbar { position: sticky; top: 0; z-index: 40; background: rgba(11,18,24,.88); backdrop-filter: blur(14px); }
+#view-nav a::before { display: inline-block; width: 1.3em; text-align: center; margin-right: 2px; opacity: .9; }
+#view-nav a[data-tab="overview"]::before { content: "⌂"; }
+#view-nav a[data-tab="betting"]::before { content: "⚽"; }
+#view-nav a[data-tab="accounts"]::before { content: "▤"; }
+#view-nav a[data-tab="applications"]::before { content: "✓"; }
+#view-nav a[data-tab="members"]::before { content: "☺"; }
+#view-nav a[data-tab="operations"]::before { content: "⚠"; }
+
+/* Signed in: the marketing hero is not needed inside the app */
+body:has(#dashboard:not([hidden])) .hero { display: none; }
+body:has(#dashboard:not([hidden])) footer { margin-top: 24px; }
+#dashboard .welcome-row { padding-bottom: 16px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+#dashboard .welcome-row h2 { font-size: 26px; margin: 2px 0; }
+#dashboard .panel { margin-bottom: 0; }
+#dashboard { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; align-items: start; }
+#dashboard > * { grid-column: 1 / -1; }
+
+/* Desktop */
+@media (min-width: 900px) {
+  /* Signed out: pitch on the left, sign-in on the right */
+  main.shell:has(#dashboard[hidden]) { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(360px, .9fr); gap: 40px; align-items: start; max-width: 1100px; }
+  main.shell:has(#dashboard[hidden]) .hero { display: grid; grid-template-columns: 1fr; gap: 24px; padding: 40px 0 0; position: sticky; top: 110px; }
+  main.shell:has(#dashboard[hidden]) #login-panel { margin: 0; }
+  main.shell:has(#dashboard[hidden]) footer { grid-column: 1 / -1; }
+
+  body:has(#dashboard:not([hidden])) .topbar { padding: 0 40px 0 24px; }
+  /* Signed in: fixed sidebar, content on the right */
+  body:has(#dashboard:not([hidden])) main.shell { max-width: none; margin: 0; padding: 28px 40px 24px 280px; }
+  #view-nav { position: fixed; left: 0; top: 76px; bottom: 0; width: 240px; display: flex; flex-direction: column; align-items: stretch; gap: 4px; margin: 0; padding: 18px 12px; border: 0; border-right: 1px solid var(--line); border-radius: 0; background: #0e171e; overflow-y: auto; z-index: 30; }
+  #view-nav a { display: flex; align-items: center; padding: 12px 14px; font-size: 14px; }
+  #view-nav a.active { box-shadow: inset 3px 0 0 var(--accent); }
+
+  /* Betting: games and odds on the left, ticket always visible on the right */
+  #dashboard { grid-template-columns: minmax(0, 1fr) 390px; }
+  #betting-section, #markets-section { grid-column: 1; }
+  #ticket-section { grid-column: 2; grid-row: 2 / span 12; position: sticky; top: 96px; max-height: calc(100vh - 116px); overflow-y: auto; }
+}
+
+/* Phone and tablet: bottom tab bar */
+@media (max-width: 899px) {
+  #view-nav { position: fixed; left: 0; right: 0; bottom: 0; top: auto; display: flex; justify-content: space-around; gap: 2px; margin: 0; padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px)); border: 0; border-top: 1px solid var(--line); border-radius: 0; background: rgba(14,23,30,.96); backdrop-filter: blur(14px); z-index: 40; }
+  #view-nav a { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 1px; font-size: 9.5px; letter-spacing: -.03em; text-align: center; overflow: hidden; text-overflow: ellipsis; }
+  #view-nav a::before { font-size: 18px; margin: 0; }
+  #view-nav a.active { box-shadow: inset 0 3px 0 var(--accent); }
+  body:has(#dashboard:not([hidden])) main.shell { padding-bottom: 96px; }
+  #dashboard .welcome-row h2 { font-size: 22px; }
+}
