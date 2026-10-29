@@ -409,7 +409,7 @@ function renderMarkets() {
   $('#markets-meta').textContent = `${when} · odds fetched ${new Date(openGame.fetchedAt).toLocaleTimeString()}${openGame.isLive ? ` · updates every ${LIVE_REFRESH_MS / 1000} seconds` : ''} · tap an odd to add it to your ticket.`;
   const notices = [];
   if (openGame.complete === false) notices.push('SportyBet only returned its core markets for this game right now, so some markets may be missing.');
-  if (openGame.isLive) notices.push('This game is live. Odds can change or close at any moment. When you save, a lower price is refused and you will be asked to review.');
+  { const counts = {}; for (const m of openGame.markets) counts[m.status] = (counts[m.status] || 0) + 1; notices.push(`[debug] ${openGame.markets.length} markets received, status counts ${JSON.stringify(counts)}, with usable odds: ${openGame.markets.filter((m) => m.outcomes.some(usableOdds)).length}`); }  if (openGame.isLive) notices.push('This game is live. Odds can change or close at any moment. When you save, a lower price is refused and you will be asked to review.');
   $('#markets-notice').hidden = !notices.length; $('#markets-notice').textContent = notices.join(' ');
   const filter = $('#market-filter').value.trim().toLowerCase(); const list = $('#markets-list'); list.replaceChildren();
   const markets = openGame.markets.filter((market) => market.status === 'active' && market.outcomes.some(usableOdds)
