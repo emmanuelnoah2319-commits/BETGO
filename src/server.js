@@ -4,6 +4,8 @@ import { bootstrapOwner } from './services/auth.js';
 import { recoverPendingReservationReleases } from './services/instruction-reservations.js';
 import { startSubmissionRecoveryWorker } from './services/submission-recovery-worker.js';
 import { ensureOperationalControl } from './services/operational-control.js';
+import { startExpiryReminderWorker } from './services/expiry-reminders.js';
+import { sendEmail } from './services/notifications.js';
 import app from './app.js';
 
 const config = loadConfig();
@@ -16,6 +18,9 @@ const reservationRecovery = await recoverPendingReservationReleases(db);
 if (reservationRecovery.checked > 0) console.info(JSON.stringify({ level: 'info', event: 'reservation_recovery', ...reservationRecovery }));
 const stopSubmissionRecoveryWorker = startSubmissionRecoveryWorker(db, { logger: console });
 app.locals.getSubmissionRecoveryWorkerStatus = stopSubmissionRecoveryWorker.getStatus;
+const stopExpiryReminderWorker = config.resendApiKey && config.emailFrom
+  ? startExpiryReminderWorker(db, { appOrigin: config.appOrigin, sendEmail: (message) => sendEmail(config, message), logger: console })
+  : (console.warn(JSON.stringify({ level: 'warn', event: 'expiry_reminders_disabled', reason: 'RESEND_API_KEY and EMAIL_FROM are not set' })), () => {});
 
 const server = app.listen(config.port, () => {
   console.info(JSON.stringify({ level: 'info', event: 'server_started', port: config.port, env: config.nodeEnv }));
@@ -27,6 +32,7 @@ async function shutdown(signal) {
   shuttingDown = true;
   console.info(JSON.stringify({ level: 'info', event: 'shutdown_started', signal }));
   stopSubmissionRecoveryWorker();
+  stopExpiryReminderWorker();
   server.close(async (error) => {
     try { await client.close(); } finally {
       if (error) {
