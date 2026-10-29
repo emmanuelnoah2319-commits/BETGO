@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { writeAudit } from './audit.js';
+import { issueSetupLink } from './password-reset.js';
 import { grantSubscription, latestExpiry, subscriptionsOf } from './subscriptions.js';
 
 // A claim older than this is treated as a crashed attempt and may be resumed. Every step below is idempotent.
@@ -30,7 +31,8 @@ function emailsDiffer(verified, application) {
   return Boolean(payer) && payer !== application.emailNormalized;
 }
 
-function newTemporaryPassword() { return randomBytes(18).toString('base64url'); }
+// The member never sees this value; it only makes the account unusable until they set their own password via the emailed link.
+function unusablePassword() { return randomBytes(32).toString('base64url'); }
 
 async function grantToExistingUser(db, userId, payment, application, now) {
   // Optimistic concurrency: two payments for different bookmakers must not overwrite each other's grant.
@@ -78,7 +80,6 @@ export async function activateVerifiedPayment(db, { verified, hashPassword, send
   const emailNormalized = application.emailNormalized;
   let user = null;
   let createdAccount = false;
-  let temporaryPassword = null;
   for (let attempt = 0; attempt < MAX_USER_RETRIES && !user; attempt += 1) {
     const existing = await db.collection('users').findOne({ emailNormalized });
     if (existing?.role === 'owner') {
@@ -95,14 +96,13 @@ export async function activateVerifiedPayment(db, { verified, hashPassword, send
       createdAccount = false;
       break;
     }
-    temporaryPassword = newTemporaryPassword();
     const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
     try {
       const inserted = await db.collection('users').insertOne({
-        email: application.email, emailNormalized, fullName: application.fullName, passwordHash: await hashPassword(temporaryPassword), role: 'member',
+        email: application.email, emailNormalized, fullName: application.fullName, passwordHash: await hashPassword(unusablePassword()), role: 'member',
         bookmaker: application.bookmaker, createdAt: now, disabledAt: null, authVersion: 1, subVersion: 1,
         subscriptionStartedAt: now, subscriptionExpiresAt: expiresAt, subscriptions: [{ bookmaker: application.bookmaker, startedAt: now, expiresAt }],
-        appliedPaymentRefs: [payment.reference], mustChangePassword: true, temporaryPasswordIssuedAt: now, applicationId: application._id
+        appliedPaymentRefs: [payment.reference], mustChangePassword: true, applicationId: application._id
       });
       user = await db.collection('users').findOne({ _id: inserted.insertedId });
       createdAccount = true;
@@ -119,19 +119,17 @@ export async function activateVerifiedPayment(db, { verified, hashPassword, send
 
   // State is committed. Emailing is last and its failure never undoes or repeats the activation.
   const emailed = createdAccount
-    ? await sendCredentials(db, { payment, application, user, temporaryPassword, bookmakerExpiresAt, hashPassword, sendEmail, appOrigin, now, requestId })
+    ? await sendCredentials(db, { payment, application, bookmakerExpiresAt, user, sendEmail, appOrigin, now, requestId })
     : await sendConfirmation(db, { payment, application, bookmakerExpiresAt, sendEmail, appOrigin, requestId });
   return { outcome: 'activated', createdAccount, emailed };
 }
 
-async function sendCredentials(db, { payment, application, user, temporaryPassword, bookmakerExpiresAt, hashPassword, sendEmail, appOrigin, now, requestId }) {
+async function sendCredentials(db, { payment, application, user, bookmakerExpiresAt, sendEmail, appOrigin, now, requestId }) {
   try {
-    let password = temporaryPassword;
-    if (!password) { // resumed attempt: the original password was never emailed, so issue a fresh one
-      password = newTemporaryPassword();
-      await db.collection('users').updateOne({ _id: user._id, mustChangePassword: true }, { $set: { passwordHash: await hashPassword(password), temporaryPasswordIssuedAt: now } });
-    }
-    await sendEmail({ to: application.email, subject: 'BETGO payment confirmed — temporary login', text: `Hello ${application.fullName},\n\nYour payment of NGN ${Number(payment.amountNgn).toLocaleString('en-NG')} is confirmed. Your ${application.bookmaker} subscription is active until ${new Date(bookmakerExpiresAt).toISOString()}.\n\nUsername: ${application.email}\nTemporary password: ${password}\n\nSign in at ${appOrigin}. Change this temporary password immediately and do not share it. Your subscription expires 30 days after payment confirmation.` });
+    await issueSetupLink(db, { userId: user._id, appOrigin, requestId, now, send: (link) => sendEmail({
+      to: application.email, subject: 'BETGO payment confirmed — set your password',
+      text: `Hello ${application.fullName},\n\nYour payment of NGN ${Number(payment.amountNgn).toLocaleString('en-NG')} is confirmed. Your ${application.bookmaker} subscription is active until ${new Date(bookmakerExpiresAt).toISOString()}.\n\nYour username is ${application.email}. Choose your password using this one-time link (valid for 72 hours):\n\n${link}\n\nIf the link expires, use "Forgot password" on the sign-in page. BETGO never emails passwords.`
+    }) });
     await db.collection('payments').updateOne({ _id: payment._id }, { $set: { credentialEmailSentAt: new Date() } });
     return true;
   } catch (error) {
@@ -157,6 +155,6 @@ async function retryCredentialEmailIfNeeded(db, { payment, application, hashPass
   const user = await db.collection('users').findOne({ _id: payment.userId });
   if (!user || user.mustChangePassword !== true) return { outcome: 'already_processed' };
   const bookmakerExpiresAt = subscriptionsOf(user).find((item) => item.bookmaker === application.bookmaker)?.expiresAt || latestExpiry(user);
-  const emailed = await sendCredentials(db, { payment, application, user, temporaryPassword: null, bookmakerExpiresAt, hashPassword, sendEmail, appOrigin, now });
+  const emailed = await sendCredentials(db, { payment, application, user, bookmakerExpiresAt, sendEmail, appOrigin, now });
   return { outcome: 'already_processed', credentialEmailRetried: true, emailed };
 }

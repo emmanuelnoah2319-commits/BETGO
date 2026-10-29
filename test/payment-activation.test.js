@@ -43,7 +43,10 @@ test('a paid new applicant gets one member, one 30-day subscription for the righ
   assert.equal(db.rows('payments')[0].status, 'paid');
   assert.equal(db.rows('applications')[0].status, 'active');
   assert.equal(sent.length, 1);
-  assert.match(sent[0].text, /Temporary password: \S+/);
+  assert.match(sent[0].text, /#reset=[A-Za-z0-9_-]{43}/);
+  assert.doesNotMatch(sent[0].text, /password:/i, 'no password is ever emailed');
+  assert.equal(db.rows('passwordResets').length, 1);
+  assert.equal(new Date(db.rows('passwordResets')[0].expiresAt).getTime() - NOW.getTime(), 72 * 60 * 60 * 1000);
 });
 
 test('the amount charged is bound to the bookmaker price on the payment record', async () => {
@@ -82,7 +85,7 @@ test('an existing member buying a second bookmaker keeps their password and othe
   const user = db.rows('users')[0];
   assert.equal(user.passwordHash, 'keep-me');
   assert.deepEqual(user.subscriptions.map((s) => s.bookmaker).sort(), ['MSport', 'SportyBet']);
-  assert.doesNotMatch(sent[0].text, /Temporary password/);
+  assert.doesNotMatch(sent[0].text, /#reset=/);
 });
 
 test('a renewal while active extends from the current expiry, once, even if delivered twice', async () => {
@@ -142,7 +145,7 @@ test('a claim left behind by a crashed attempt is resumed without creating a sec
   assert.equal(result.outcome, 'activated');
   assert.equal(db.rows('users').length, 1);
   assert.equal(db.rows('users')[0].subscriptions.length, 1);
-  assert.notEqual(db.rows('users')[0].passwordHash, 'lost');
+  assert.match(sent[0].text, /#reset=/);
   assert.equal(sent.length, 1);
 });
 
@@ -152,4 +155,38 @@ test('a fresh claim held by another request is not stolen', async () => {
   db.rows('payments')[0].processingAt = NOW;
   assert.equal((await run()).outcome, 'in_progress');
   assert.equal(db.rows('users').length, 0);
+});
+
+test('the setup link lets the new member choose a password once, and a newer link retires the older one', async () => {
+  const { db, run, sent } = setup();
+  await run();
+  const oldLink = /#reset=([A-Za-z0-9_-]{43})/.exec(sent[0].text)[1];
+  const { issueSetupLink, completePasswordReset } = await import('../src/services/password-reset.js');
+  let newer;
+  await issueSetupLink(db, { userId: db.rows('users')[0]._id, appOrigin: 'https://betgo.example', now: NOW, send: async (link) => { newer = /#reset=([A-Za-z0-9_-]{43})/.exec(link)[1]; } });
+  const hashFn = async (p) => `hash:${p}`;
+  assert.equal(await completePasswordReset(db, { token: oldLink, newPassword: 'a-long-new-password', hashPassword: hashFn, now: NOW }), null);
+  const done = await completePasswordReset(db, { token: newer, newPassword: 'a-long-new-password', hashPassword: hashFn, now: NOW });
+  assert.ok(done);
+  assert.equal(db.rows('users')[0].mustChangePassword, false);
+  assert.equal(db.rows('users')[0].passwordHash, 'hash:a-long-new-password');
+  assert.equal(await completePasswordReset(db, { token: newer, newPassword: 'another-long-password', hashPassword: hashFn, now: NOW }), null);
+});
+
+test('an expired setup link is refused', async () => {
+  const { db, run, sent } = setup();
+  await run();
+  const token = /#reset=([A-Za-z0-9_-]{43})/.exec(sent[0].text)[1];
+  const { completePasswordReset } = await import('../src/services/password-reset.js');
+  const late = new Date(NOW.getTime() + 73 * 60 * 60 * 1000);
+  assert.equal(await completePasswordReset(db, { token, newPassword: 'a-long-new-password', hashPassword: async (p) => p, now: late }), null);
+});
+
+test('forgot-password sends nothing to a deactivated member', async () => {
+  const { requestPasswordReset } = await import('../src/services/password-reset.js');
+  const db = createFakeDb();
+  db.seed('users', { email: 'x@y.com', emailNormalized: 'x@y.com', role: 'member', disabledAt: NOW });
+  const sent = [];
+  const result = await requestPasswordReset(db, { email: 'X@y.com', appOrigin: 'https://betgo.example', sendEmail: async (m) => sent.push(m), now: NOW });
+  assert.deepEqual([result.sent, result.reason, sent.length], [false, 'disabled', 0]);
 });

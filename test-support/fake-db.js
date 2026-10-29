@@ -43,6 +43,10 @@ export function createFakeDb({ unique = { users: ['emailNormalized'], payments: 
       await Promise.resolve(); const hit = table(name).find((d) => matches(d, filter));
       if (!hit) return { matchedCount: 0, modifiedCount: 0 }; applyUpdate(hit, update); return { matchedCount: 1, modifiedCount: 1 };
     },
+    async updateMany(filter, update) {
+      await Promise.resolve(); const hits = table(name).filter((d) => matches(d, filter));
+      for (const hit of hits) applyUpdate(hit, update); return { matchedCount: hits.length, modifiedCount: hits.length };
+    },
     async findOneAndUpdate(filter, update, options = {}) {
       await Promise.resolve(); const hit = table(name).find((d) => matches(d, filter));
       if (!hit) return null; const before = structuredClone(hit); applyUpdate(hit, update);

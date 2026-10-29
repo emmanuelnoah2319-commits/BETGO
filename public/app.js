@@ -91,6 +91,15 @@ function renderAccount(account) {
     finally { check.disabled = false; await loadAccounts(); }
   });
   actions.append(check);
+  const remove = element('button', 'button-secondary', 'Remove'); remove.type = 'button';
+  remove.addEventListener('click', async () => {
+    if (!window.confirm(`Remove ${account.displayName}? This cannot be undone.`)) return;
+    remove.disabled = true;
+    try { await mutate(`/api/accounts/${account.id}`, 'DELETE'); showDashboardMessage('Account removed.'); }
+    catch (error) { showDashboardMessage(error.message, true); }
+    finally { await loadAccounts(); }
+  });
+  actions.append(remove);
   if (['connected', 'needs_attention'].includes(account.connectionStatus)) {
     const disconnect = element('button', 'button-secondary', 'Disconnect'); disconnect.type = 'button';
     disconnect.addEventListener('click', async () => {

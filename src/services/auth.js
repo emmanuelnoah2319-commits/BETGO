@@ -31,9 +31,14 @@ export async function login(db, config, { email, password, requestId }) {
     ? await argon2.verify(user.passwordHash, password).catch(() => false)
     : false;
   const subscriptionExpired = isSubscriptionExpired(user);
-  if (!user || !passwordMatches || subscriptionExpired) {
+  if (!user || !passwordMatches) {
     await writeAudit(db, { action: 'auth.login', outcome: 'rejected', requestId, details: { reason: 'invalid_credentials' } });
     return null;
+  }
+  // Only someone who proved they know the password is told why they cannot sign in, so this reveals nothing to guessers.
+  if (subscriptionExpired) {
+    await writeAudit(db, { actorUserId: user._id, action: 'auth.login', outcome: 'rejected', requestId, details: { reason: 'subscription_expired' } });
+    return { expired: true };
   }
   const rawToken = createSessionToken();
   const now = new Date();

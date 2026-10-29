@@ -4,6 +4,7 @@ import { writeAudit } from './audit.js';
 
 export const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
 export const RESET_REQUEST_COOLDOWN_MS = 60 * 1000;
+export const SETUP_TOKEN_TTL_MS = 72 * 60 * 60 * 1000;
 export const MIN_PASSWORD_LENGTH = 12;
 
 export function createResetToken() {
@@ -21,6 +22,7 @@ export async function requestPasswordReset(db, { email, appOrigin, requestId, se
   const emailNormalized = String(email).trim().toLowerCase();
   const user = await db.collection('users').findOne({ emailNormalized });
   if (!user) return { sent: false, reason: 'unknown_email' };
+  if (user.disabledAt) return { sent: false, reason: 'disabled' };
   const recent = await db.collection('passwordResets').findOne({ userId: user._id, createdAt: { $gt: new Date(now.getTime() - RESET_REQUEST_COOLDOWN_MS) } });
   if (recent) return { sent: false, reason: 'cooldown' };
   const { token, tokenHash } = createResetToken();
@@ -57,4 +59,15 @@ export async function completePasswordReset(db, { token, newPassword, hashPasswo
   await db.collection('sessions').updateMany({ userId: user._id, revokedAt: null }, { $set: { revokedAt: now } });
   await writeAudit(db, { actorUserId: user._id, action: 'auth.password_reset_complete', requestId });
   return { user };
+}
+
+// First-time password setup for a newly activated member. No password is ever emailed: the member opens a one-time
+// link (valid 72 hours) and chooses their own. It uses the same token store and completion step as a reset, so a
+// newer link retires older ones and each link works once. `send(link)` builds and delivers the email.
+export async function issueSetupLink(db, { userId, appOrigin, send, requestId, now = new Date() }) {
+  const { token, tokenHash } = createResetToken();
+  await db.collection('passwordResets').updateMany({ userId, usedAt: null }, { $set: { usedAt: now, supersededAt: now } });
+  await db.collection('passwordResets').insertOne({ userId, tokenHash, createdAt: now, expiresAt: new Date(now.getTime() + SETUP_TOKEN_TTL_MS), usedAt: null, requestId: requestId || null, purpose: 'setup' });
+  await send(buildResetLink(appOrigin, token));
+  return { expiresAt: new Date(now.getTime() + SETUP_TOKEN_TTL_MS) };
 }

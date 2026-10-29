@@ -18,3 +18,9 @@ Either verify a domain you control in Resend (add its DNS records, wait for "Ver
 5. Cancel a checkout: friendly page; the original link still works.
 6. Reject a test application: the applicant receives the reason.
 If step 3 fails, find `payment_return_rejected` or `payment.mismatch` (audit) in the Render logs; the `reason` field says which check failed.
+
+## Phase 2 additions
+- New members get a one-time **password setup link** (72 h) instead of an emailed temporary password. Lost or expired links: "Forgot password". Admin "reset password" and forgot-password still use 30-minute links and skip deactivated members.
+- Signing in with the right password after every subscription has lapsed returns 403 `SUBSCRIPTION_EXPIRED` with renewal instructions (a wrong password still gets the generic error). One lapsed bookmaker does not block a member with another active one; its accounts are hidden until renewed.
+- `DELETE /api/accounts/:id` removes an account record unless instructions or submissions reference it (409 `ACCOUNT_IN_USE`). Each account keeps its own connection status; members may hold any number of accounts per subscribed bookmaker.
+- No bookmaker can reach "connected" yet: that needs a verified connector (see docs/CONNECTOR-RELEASE-GATE.md).

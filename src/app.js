@@ -186,6 +186,7 @@ app.post('/api/auth/login', authLimiter, csrfProtection, async (req, res, next) 
     if (!parsed.success) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Provide a valid email and password.' } });
     const result = await login(req.app.locals.db, req.app.locals.config, { ...parsed.data, requestId: req.requestId });
     if (!result) return res.status(401).json({ error: { code: 'INVALID_CREDENTIALS', message: 'Email or password is incorrect.' } });
+    if (result.expired) return res.status(403).json({ error: { code: 'SUBSCRIPTION_EXPIRED', message: 'Your 30-day BETGO subscription has expired. Submit a new application for your bookmaker on the sign-in page to renew; your password and account records are kept.' } });
     res.cookie(req.app.locals.config.cookieName, result.token, {
       httpOnly: true,
       secure: req.app.locals.config.cookieSecure,
@@ -705,6 +706,22 @@ app.patch('/api/accounts/:accountId', csrfProtection, requireAuthLazy, async (re
     if (error?.code === 11000) return res.status(409).json({ error: { code: 'ACCOUNT_EXISTS', message: 'An account with this name already exists for this platform.' } });
     next(error);
   }
+});
+
+// Removing an account record is only allowed while nothing refers to it, so instruction history is never orphaned.
+app.delete('/api/accounts/:accountId', csrfProtection, requireAuthLazy, async (req, res, next) => {
+  try {
+    const { account, error } = await loadOwnAccount(req);
+    if (error) return res.status(error.status).json({ error: { code: error.code, message: error.message } });
+    const db = req.app.locals.db;
+    const used = await db.collection('betInstructions').findOne({ accountId: account._id });
+    const submitted = used ? null : await db.collection('betSubmissions').findOne({ accountId: account._id });
+    if (used || submitted) return res.status(409).json({ error: { code: 'ACCOUNT_IN_USE', message: 'This account has bet instructions on record, so it cannot be removed. Disable it instead.' } });
+    const result = await db.collection('bettingAccounts').deleteOne({ _id: account._id, ownerUserId: req.user._id });
+    if (result.deletedCount !== 1) return res.status(404).json({ error: { code: 'ACCOUNT_NOT_FOUND', message: 'Account not found.' } });
+    await writeAudit(db, { actorUserId: req.user._id, action: 'account.delete', requestId: req.requestId, details: { accountId: account._id.toString(), platform: account.platform } });
+    res.status(204).end();
+  } catch (error) { next(error); }
 });
 
 function publicAccount(account) {
