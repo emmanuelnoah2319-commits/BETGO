@@ -82,3 +82,15 @@ test('SportyBet dashboard hands a selected outcome into the review form with a t
   assert.match(source, /instruction-selection/);
   assert.match(source, /BETGO has not placed a bet/);
 });
+
+test('getMarketsForEvents refreshes once and returns labelled markets per event', async () => {
+  let calls = 0;
+  const client = createSportyBetDataClient({ fetchImpl: async () => { calls += 1; return response(sampleData); } });
+  const result = await client.getMarketsForEvents(['sr:match:123456', 'sr:match:999']);
+  assert.equal(calls, 1);
+  assert.equal(result.events['sr:match:123456'].label, 'Home FC vs Away FC');
+  assert.equal(result.events['sr:match:123456'].markets[0].outcomes.length, 3);
+  assert.equal(result.events['sr:match:999'], undefined);
+  await assert.rejects(client.getMarketsForEvents(['nope']), { code: 'INVALID_EVENT_ID', status: 400 });
+  await assert.rejects(client.getMarketsForEvents([]), { code: 'INVALID_EVENT_ID' });
+});

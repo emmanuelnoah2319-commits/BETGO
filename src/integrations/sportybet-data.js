@@ -105,7 +105,21 @@ export function createSportyBetDataClient({
     return { provider: 'SportyBet', fetchedAt: result.fetchedAt, eventId, markets: fixture.markets, cached: result.cached };
   }
 
-  return Object.freeze({ getFixtures, getMarkets });
+  // One upstream refresh for every leg of a slip, so verifying a ticket costs a single request.
+  async function getMarketsForEvents(eventIds) {
+    if (!Array.isArray(eventIds) || eventIds.length < 1 || eventIds.length > 10 || eventIds.some((id) => typeof id !== 'string' || !/^sr:match:\d+$/.test(id))) {
+      throw providerError('Invalid SportyBet event IDs.', 'INVALID_EVENT_ID', 400);
+    }
+    const result = await getFixtures({ limit: 100, timeline: 720, forceRefresh: true });
+    const events = {};
+    for (const id of new Set(eventIds)) {
+      const fixture = result.fixtures.find((item) => item.eventId === id);
+      if (fixture) events[id] = { label: `${fixture.homeTeam} vs ${fixture.awayTeam}`, startTime: fixture.startTime, matchStatus: fixture.matchStatus, markets: fixture.markets };
+    }
+    return { provider: 'SportyBet', fetchedAt: result.fetchedAt, events };
+  }
+
+  return Object.freeze({ getFixtures, getMarkets, getMarketsForEvents });
 }
 
 export const sportyBetDataClient = createSportyBetDataClient();

@@ -106,6 +106,7 @@
         <div class="panel-heading"><div><p class="eyebrow">BET TRACKING</p><h2>Prepare an instruction</h2></div><span class="pill">No submission</span></div>
         <p class="muted">Build a ticket from current read-only SportyBet odds. The server applies your maximum net-profit cap and daily safety limits before recording the review instruction. This does not log into a bookmaker or place a bet.</p>
         <p class="field-hint">Create an instruction only when you are ready to review its event, selection and stake. Approval still does not place a bet.</p>
+        <div id="slip" class="panel" hidden><p class="eyebrow">YOUR SLIP</p><div id="slip-legs" class="account-list"></div><p class="field-hint">Two or more selections form an accumulator: one outcome per match, odds multiplied together.</p><button id="slip-clear" type="button" class="button-secondary">Clear slip</button></div>
         <form id="instruction-form" class="account-form"><div class="form-grid">
           <div><label for="instruction-account">Account record</label><select id="instruction-account" required><option value="">Add an account record first</option></select></div>
           <div><label for="instruction-stake">Requested stake (₦)</label><input id="instruction-stake" type="number" min="1" step="0.01" value="5000" required></div>

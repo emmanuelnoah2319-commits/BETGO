@@ -19,6 +19,28 @@ function updateTicketCalculation() {
   output.textContent = `Odds ${odds.toFixed(2)} · suggested stake ₦${koboToNaira(suggestedMinor)} · potential net profit ₦${koboToNaira(profitMinor)} (cap ₦${koboToNaira(capMinor)}). Server re-applies the cap and safety limits.`;
 }
 const koboToNaira = (value) => (Number(value) / 100).toFixed(2);
+const MAX_SLIP_LEGS = 10;
+let slipLegs = [];
+function combinedSlipOdds() { return Number(slipLegs.reduce((product, leg) => product * leg.odds, 1).toFixed(4)); }
+function renderSlip() {
+  const box = $('#slip'); const list = $('#slip-legs'); list.replaceChildren(); box.hidden = slipLegs.length === 0;
+  for (const leg of slipLegs) {
+    const row = element('div', 'fixture-outcome'); row.append(element('span', '', `${leg.eventLabel} — ${leg.selectionLabel} @ ${leg.odds.toFixed(2)}`));
+    const remove = element('button', 'button-secondary', 'Remove'); remove.type = 'button';
+    remove.addEventListener('click', () => { slipLegs = slipLegs.filter((item) => item !== leg); if (slipLegs.length < 2) { $('#instruction-odds').value = ''; selectedOddsDecimal = null; } renderSlip(); });
+    row.append(remove); list.append(row);
+  }
+  if (slipLegs.length >= 2) {
+    const total = combinedSlipOdds();
+    $('#instruction-odds').value = total.toFixed(2);
+    $('#instruction-event').value = `Accumulator · ${slipLegs.length} selections`;
+    $('#instruction-selection').value = slipLegs.map((leg) => leg.selectionLabel).join(' + ').slice(0, 160);
+    selectedOddsDecimal = total; selectedProviderSelection = null;
+    if (total > 1000) showMessage('instruction-message', 'Combined odds are above 1000. Remove a selection.', true);
+  }
+  updateTicketCalculation();
+}
+$('#slip-clear').addEventListener('click', () => { slipLegs = []; $('#instruction-odds').value = ''; selectedOddsDecimal = null; renderSlip(); });
 
 async function request(url, options = {}) {
   const response = await fetch(url, { credentials: 'same-origin', ...options, headers: { ...(options.headers || {}) } });
@@ -130,6 +152,7 @@ function renderInstruction(item) {
   identity.append(element('strong', '', item.eventLabel), element('small', '', `${item.selectionLabel} · ${item.accountLabel}`));
   top.append(identity, element('span', 'pill', item.status.replaceAll('_', ' ')));
   card.append(top, element('p', 'account-notes', `Stake: ₦${koboToNaira(item.stakeMinor)} · ${item.platform}${item.oddsDecimal ? ` · odds ${Number(item.oddsDecimal).toFixed(2)} · potential net profit up to ₦${koboToNaira(Math.min(item.maxNetProfitMinor || 0, Math.floor(item.stakeMinor * (item.oddsDecimal - 1))))}` : ''}`));
+  if (item.ticketType === 'accumulator') for (const leg of item.legs) card.append(element('p', 'fixture-meta', `${leg.eventLabel} — ${leg.selectionLabel} @ ${Number(leg.oddsDecimal).toFixed(2)}`));
   if (item.stakeAdjusted) card.append(element('p', 'muted small', 'Stake was reduced by the server to respect the maximum net-profit cap.')); 
   if (item.notes) card.append(element('p', 'account-notes', item.notes));
   card.append(element('p', 'muted small', 'Recorded for review only. No bookmaker submission has occurred.'));
@@ -228,6 +251,7 @@ $('#load-sportybet-fixtures').addEventListener('click', async () => {
           use.disabled = !hasPrice || outcome.active !== true || fixture.matchStatus !== 'not_started';
           use.title = use.disabled ? 'This outcome is inactive or its price is unavailable.' : 'Copy this event and price snapshot into the review form.';
           use.addEventListener('click', () => {
+            slipLegs = []; renderSlip();
             const account = [...$('#instruction-account').options].find((option) => option.value && option.textContent.includes('SportyBet'));
             if (account) $('#instruction-account').value = account.value;
             else { showMessage('instruction-message', 'Add a SportyBet account record first; these odds can only be used with one.', true); return; }
@@ -244,7 +268,23 @@ $('#load-sportybet-fixtures').addEventListener('click', async () => {
             $('#instruction-stake').focus();
             showMessage('instruction-message', account ? 'Selection copied with a timestamped odds snapshot. Enter your stake and review before creating an instruction.' : 'Selection copied. Add a SportyBet account record, then choose it before creating the instruction.');
           });
-          row.append(use);
+          const add = element('button', 'button-secondary fixture-use-selection', 'Add to slip');
+          add.type = 'button'; add.disabled = use.disabled;
+          add.addEventListener('click', () => {
+            const account = [...$('#instruction-account').options].find((option) => option.value && option.textContent.includes('SportyBet'));
+            if (!account) { showMessage('instruction-message', 'Add a SportyBet account record first; these odds can only be used with one.', true); return; }
+            $('#instruction-account').value = account.value;
+            const leg = { eventId: fixture.eventId, marketId: market.marketId, outcomeId: outcome.outcomeId, odds: price, eventLabel: `${fixture.homeTeam} vs ${fixture.awayTeam}`.slice(0, 160), selectionLabel: `${market.marketName || '1X2'}: ${label}`.slice(0, 80) };
+            const existing = slipLegs.findIndex((item) => item.eventId === leg.eventId);
+            if (existing >= 0) slipLegs[existing] = leg;
+            else if (slipLegs.length >= MAX_SLIP_LEGS) { showMessage('instruction-message', `A slip can hold at most ${MAX_SLIP_LEGS} selections.`, true); return; }
+            else slipLegs.push(leg);
+            selectedProviderSelection = null; selectedOddsDecimal = null;
+            if (slipLegs.length < 2) { $('#instruction-odds').value = ''; $('#instruction-event').value = ''; $('#instruction-selection').value = ''; }
+            renderSlip();
+            showMessage('instruction-message', slipLegs.length < 2 ? 'Added. Pick one more match to build an accumulator, or clear the slip.' : `${slipLegs.length} selections in your slip. Enter a stake and review before creating an instruction.`);
+          });
+          row.append(use, add);
           odds.append(row);
         }
       }
@@ -291,7 +331,7 @@ $('#instruction-stake').addEventListener('input', updateTicketCalculation);
 $('#instruction-max-profit').addEventListener('input', updateTicketCalculation);
 $('#instruction-form').addEventListener('submit', async (event) => {
   event.preventDefault(); const button = $('#create-instruction-button'); button.disabled = true; button.textContent = 'Creating…';
-  try { const payload = { accountId: $('#instruction-account').value, stakeMinor: nairaToKobo($('#instruction-stake').value), eventLabel: $('#instruction-event').value.trim(), selectionLabel: $('#instruction-selection').value.trim(), notes: $('#instruction-notes').value.trim(), idempotencyKey: crypto.randomUUID() }; if (selectedOddsDecimal && selectedProviderSelection) { Object.assign(payload, selectedProviderSelection, { oddsDecimal: selectedOddsDecimal, maxNetProfitMinor: nairaToKobo($('#instruction-max-profit').value) }); } const result = await mutate('/api/bet-instructions', 'POST', payload); $('#instruction-form').reset(); $('#instruction-odds').value = ''; selectedOddsDecimal = null; selectedOddsFetchedAt = null; selectedProviderSelection = null; updateTicketCalculation(); const item = result?.instruction; showMessage('instruction-message', item?.stakeAdjusted ? `Instruction recorded. Server reduced the stake to ₦${koboToNaira(item.stakeMinor)} to respect your net-profit cap. No bet was submitted.` : 'Instruction created for review. No bet was submitted.'); await loadInstructions(); }
+  try { const payload = { accountId: $('#instruction-account').value, stakeMinor: nairaToKobo($('#instruction-stake').value), eventLabel: $('#instruction-event').value.trim(), selectionLabel: $('#instruction-selection').value.trim(), notes: $('#instruction-notes').value.trim(), idempotencyKey: crypto.randomUUID() }; if (slipLegs.length === 1) { showMessage('instruction-message', 'Add a second selection to build an accumulator, or clear the slip.', true); return; } if (slipLegs.length >= 2) { delete payload.eventLabel; delete payload.selectionLabel; payload.legs = slipLegs.map((leg) => ({ eventId: leg.eventId, marketId: leg.marketId, outcomeId: leg.outcomeId, oddsDecimal: leg.odds })); payload.maxNetProfitMinor = nairaToKobo($('#instruction-max-profit').value); } else if (selectedOddsDecimal && selectedProviderSelection) { Object.assign(payload, selectedProviderSelection, { oddsDecimal: selectedOddsDecimal, maxNetProfitMinor: nairaToKobo($('#instruction-max-profit').value) }); } const result = await mutate('/api/bet-instructions', 'POST', payload); $('#instruction-form').reset(); $('#instruction-odds').value = ''; selectedOddsDecimal = null; selectedOddsFetchedAt = null; selectedProviderSelection = null; slipLegs = []; renderSlip(); const item = result?.instruction; showMessage('instruction-message', item?.stakeAdjusted ? `Instruction recorded. Server reduced the stake to ₦${koboToNaira(item.stakeMinor)} to respect your net-profit cap. No bet was submitted.` : 'Instruction created for review. No bet was submitted.'); await loadInstructions(); }
   catch (error) { showMessage('instruction-message', error.message, true); }
   finally { button.disabled = false; button.textContent = 'Create review instruction'; }
 });
