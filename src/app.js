@@ -16,12 +16,14 @@ import { sportyBetDataClient } from './integrations/sportybet-data.js';
 import { CANCELLABLE_INSTRUCTION_STATUSES, transitionInstructionStatus } from './services/instruction-lifecycle.js';
 import { recoverPendingReservationReleases, releaseInstructionReservation } from './services/instruction-reservations.js';
 import { getOperationalControl, setEmergencyStop } from './services/operational-control.js';
-import { sendEmail } from './services/notifications.js';
+import { emailSenderStatus, sendEmail } from './services/notifications.js';
+import { PAYMENT_REFERENCE_PATTERN, activateVerifiedPayment } from './services/payment-activation.js';
+import { approveApplication, rejectApplication, resendPaymentEmail } from './services/application-review.js';
 import { oddsSourceBlock } from './services/ticket-rules.js';
 import { MAX_COMBINED_ODDS, MAX_LEGS, combinedOdds, legsBlock } from './services/ticket-math.js';
 import { escapeRegex, manageBlock, publicUser } from './services/user-admin.js';
 import { MIN_PASSWORD_LENGTH, completePasswordReset, requestPasswordReset } from './services/password-reset.js';
-import { initializeFlutterwavePayment, verifyFlutterwavePayment } from './services/payments.js';
+import { initializeFlutterwavePayment, verifyFlutterwaveByReference, verifyFlutterwavePayment } from './services/payments.js';
 import { capStakeToNetProfit } from './services/profit-cap.js';
 import { OPEN_APPLICATION_STATUSES, allowedBookmakers, applicationBlock, canUseBookmaker, grantSubscription, hasSubscriptionRecord, latestExpiry, publicSubscriptions, subscriptionsOf } from './services/subscriptions.js';
 
@@ -359,97 +361,109 @@ app.post('/api/admin/users/:userId/reactivate', csrfProtection, requireAuthLazy,
 app.get('/api/admin/applications', requireAuthLazy, requireOwner, async (req, res) => {
   const applications = await req.app.locals.db.collection('applications').find({}).sort({ createdAt: -1 }).limit(200).toArray();
   res.setHeader('Cache-Control', 'no-store');
-  res.json({ applications: applications.map((item) => ({ id: item._id.toString(), fullName: item.fullName, email: item.email, bookmaker: item.bookmaker, priceNgn: item.priceNgn, type: item.type || 'new', status: item.status, createdAt: item.createdAt, rejectionReason: item.rejectionReason || null })) });
+  res.json({ applications: applications.map((item) => ({ id: item._id.toString(), fullName: item.fullName, email: item.email, bookmaker: item.bookmaker, priceNgn: item.priceNgn, type: item.type || 'new', status: item.status, createdAt: item.createdAt, rejectionReason: item.rejectionReason || null, paymentUrl: item.status === 'approved_awaiting_payment' ? item.paymentUrl || null : null, paymentEmailSent: item.status === 'approved_awaiting_payment' ? Boolean(item.paymentEmailSentAt) : undefined })) });
 });
+
+function reviewFailure(res, error) {
+  if (error?.expose && Number.isInteger(error.status)) return res.status(error.status).json({ error: { code: error.code, message: error.message } });
+  return null;
+}
 
 app.post('/api/admin/applications/:applicationId/reject', csrfProtection, requireAuthLazy, requireOwner, async (req, res, next) => {
   try {
     if (!ObjectId.isValid(req.params.applicationId)) return res.status(400).json({ error: { code: 'INVALID_APPLICATION_ID', message: 'Application ID is invalid.' } });
     const parsed = reviewSchema.safeParse(req.body);
     if (!parsed.success || !parsed.data.reason) return res.status(400).json({ error: { code: 'REJECTION_REASON_REQUIRED', message: 'A clear rejection reason is required.' } });
-    if (!req.app.locals.config.resendApiKey || !req.app.locals.config.emailFrom) return res.status(503).json({ error: { code: 'EMAIL_NOT_CONFIGURED', message: 'Customer email is not configured. Application was not changed.' } });
-    const db = req.app.locals.db;
-    const application = await db.collection('applications').findOneAndUpdate(
-      { _id: new ObjectId(req.params.applicationId), status: 'pending' },
-      { $set: { status: 'rejected', rejectionReason: parsed.data.reason, reviewedAt: new Date(), reviewedByUserId: req.user._id, updatedAt: new Date() } },
-      { returnDocument: 'after' }
-    );
-    if (!application) return res.status(409).json({ error: { code: 'APPLICATION_NOT_PENDING', message: 'Application not found or already reviewed.' } });
-    let notificationSent = true;
-    try {
-      await sendEmail(req.app.locals.config, { to: application.email, subject: 'BETGO application update', text: `Hello ${application.fullName},\n\nYour BETGO application for ${application.bookmaker} was not approved.\n\nReason: ${parsed.data.reason}\n\nYou may contact BETGO support if you need clarification.` });
-    } catch (emailError) {
-      notificationSent = false;
-      console.error(JSON.stringify({ level: 'error', event: 'application_rejection_email_failed', requestId: req.requestId, applicationId: application._id.toString(), errorName: emailError?.name || 'Error', errorCode: emailError?.code || 'EMAIL_SEND_FAILED' }));
-    }
-    await writeAudit(db, { actorUserId: req.user._id, action: 'application.reject', requestId: req.requestId, details: { applicationId: application._id.toString(), bookmaker: application.bookmaker, notificationSent } });
-    res.json({ message: notificationSent ? 'Application rejected and notification email sent.' : 'Application rejected, but the notification email could not be sent. Check the email provider configuration in Render.', notificationSent });
-  } catch (error) { next(error); }
+    const config = req.app.locals.config;
+    const result = await rejectApplication(req.app.locals.db, config, { applicationId: new ObjectId(req.params.applicationId), reviewerId: req.user._id, reason: parsed.data.reason, requestId: req.requestId, sendEmail: (message) => sendEmail(config, message) });
+    res.json({ message: result.notificationSent ? 'Application rejected and notification email sent.' : 'Application rejected, but the notification email could not be sent. Check the email sender configuration (GET /api/admin/status).', notificationSent: result.notificationSent });
+  } catch (error) { if (!reviewFailure(res, error)) next(error); }
 });
 
 app.post('/api/admin/applications/:applicationId/approve', csrfProtection, requireAuthLazy, requireOwner, async (req, res, next) => {
   try {
     if (!ObjectId.isValid(req.params.applicationId)) return res.status(400).json({ error: { code: 'INVALID_APPLICATION_ID', message: 'Application ID is invalid.' } });
-    if (!req.app.locals.config.resendApiKey || !req.app.locals.config.emailFrom) return res.status(503).json({ error: { code: 'EMAIL_NOT_CONFIGURED', message: 'Customer email is not configured. Application was not changed.' } });
-    if (!req.app.locals.config.flutterwaveSecretKey) return res.status(503).json({ error: { code: 'PAYMENTS_NOT_CONFIGURED', message: 'Flutterwave is not configured. Application was not changed.' } });
-    const db = req.app.locals.db;
-    const application = await db.collection('applications').findOne({ _id: new ObjectId(req.params.applicationId), status: 'pending' });
-    if (!application) return res.status(409).json({ error: { code: 'APPLICATION_NOT_PENDING', message: 'Application not found or already reviewed.' } });
-    const reference = `betgo_${application._id.toString()}_${randomUUID().replaceAll('-', '')}`;
-    const payment = await initializeFlutterwavePayment(req.app.locals.config, {
-      email: application.email, fullName: application.fullName, amountNgn: application.priceNgn, reference,
-      callbackUrl: req.app.locals.config.flutterwaveCallbackUrl,
-      metadata: { applicationId: application._id.toString(), bookmaker: application.bookmaker, subscriptionDays: 30 }
+    const config = req.app.locals.config;
+    const result = await approveApplication(req.app.locals.db, config, { applicationId: new ObjectId(req.params.applicationId), reviewerId: req.user._id, requestId: req.requestId, initializePayment: initializeFlutterwavePayment, sendEmail: (message) => sendEmail(config, message) });
+    res.json({
+      message: result.notificationSent ? 'Application approved; payment link created and email sent.' : 'Application approved and payment link created, but the email could not be delivered. Copy the link below or use "Resend payment email" once email is fixed.',
+      notificationSent: result.notificationSent, paymentUrl: result.paymentUrl
     });
-    const now = new Date();
-    const updated = await db.collection('applications').findOneAndUpdate(
-      { _id: application._id, status: 'pending' },
-      { $set: { status: 'approved_awaiting_payment', reviewedAt: now, reviewedByUserId: req.user._id, paymentReference: reference, paymentUrl: payment.link, updatedAt: now } },
-      { returnDocument: 'after' }
-    );
-    if (!updated) return res.status(409).json({ error: { code: 'APPLICATION_NOT_PENDING', message: 'Application was reviewed concurrently.' } });
-    await db.collection('payments').insertOne({ applicationId: application._id, reference, amountNgn: application.priceNgn, status: 'pending', provider: 'flutterwave', createdAt: now, updatedAt: now });
-    await sendEmail(req.app.locals.config, {
-      to: application.email,
-      subject: 'Your BETGO application is approved',
-      text: `Hello ${application.fullName},\n\nYour application for ${application.bookmaker} has been approved.\n\nSubscription price: NGN ${application.priceNgn.toLocaleString('en-NG')} for 30 days.\n\nComplete payment securely using this Flutterwave link:\n${payment.link}\n\nYour 30-day subscription starts only after Flutterwave confirms successful payment. Do not share your payment details with anyone.`,
-      html: `<p>Hello ${escapeHtml(application.fullName)},</p><p>Your application for ${escapeHtml(application.bookmaker)} has been approved.</p><p>Subscription price: NGN ${application.priceNgn.toLocaleString('en-NG')} for 30 days.</p><p>Complete payment securely using this Flutterwave link:</p><p><a href="${escapeHtml(payment.link)}">Pay securely with Flutterwave</a></p><p>Your 30-day subscription starts only after Flutterwave confirms successful payment. Do not share your payment details with anyone.</p>`
-    });
-    await writeAudit(db, { actorUserId: req.user._id, action: 'application.approve', requestId: req.requestId, details: { applicationId: application._id.toString(), bookmaker: application.bookmaker, amountNgn: application.priceNgn } });
-    res.json({ message: 'Application approved; payment link created and email sent.', paymentUrl: payment.link });
-  } catch (error) { next(error); }
+  } catch (error) { if (!reviewFailure(res, error)) next(error); }
 });
 
+app.post('/api/admin/applications/:applicationId/resend-payment-email', csrfProtection, requireAuthLazy, requireOwner, async (req, res, next) => {
+  try {
+    if (!ObjectId.isValid(req.params.applicationId)) return res.status(400).json({ error: { code: 'INVALID_APPLICATION_ID', message: 'Application ID is invalid.' } });
+    const config = req.app.locals.config;
+    const result = await resendPaymentEmail(req.app.locals.db, config, { applicationId: new ObjectId(req.params.applicationId), reviewerId: req.user._id, requestId: req.requestId, sendEmail: (message) => sendEmail(config, message) });
+    res.json({ message: result.notificationSent ? 'Payment email re-sent.' : 'The email still could not be delivered. Check the email sender configuration.', notificationSent: result.notificationSent, paymentUrl: result.paymentUrl });
+  } catch (error) { if (!reviewFailure(res, error)) next(error); }
+});
+
+// Sends a real message to the signed-in owner's own address, so email delivery can be proven without touching an applicant.
+app.post('/api/admin/email/test', authLimiter, csrfProtection, requireAuthLazy, requireOwner, async (req, res) => {
+  const config = req.app.locals.config;
+  const status = emailSenderStatus(config);
+  if (!status.ready) return res.status(503).json({ error: { code: status.code, message: status.message } });
+  try {
+    await sendEmail(config, { to: req.user.email, subject: 'BETGO email delivery test', text: 'If you can read this, BETGO can deliver email from its configured sender.' });
+    res.json({ message: `Test email sent to ${req.user.email}.`, mode: status.mode });
+  } catch (error) {
+    console.error(JSON.stringify({ level: 'error', event: 'email_test_failed', requestId: req.requestId, errorCode: error?.code || null, providerStatus: error?.providerStatus || null, providerMessage: error?.providerMessage || null }));
+    res.status(502).json({ error: { code: error?.code || 'EMAIL_SEND_FAILED', message: error?.providerMessage || error?.message || 'Email could not be sent.' } });
+  }
+});
+
+const hashPassword = (password) => argon2.hash(password, { type: argon2.argon2id });
+
+function paymentLog(event, requestId, details) {
+  console.warn(JSON.stringify({ level: 'warn', event, requestId, ...details }));
+}
+
+// Flutterwave redirects here after checkout with ?status=successful|completed|cancelled&tx_ref=...&transaction_id=...
+// (cancelled and some failures carry no transaction_id). The page confirms with Flutterwave and activates idempotently,
+// so the member is activated even if the webhook is delayed; the webhook stays as the backstop.
 app.get('/payment/return', async (req, res, next) => {
   try {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
+    const config = req.app.locals.config;
+    const redirectStatus = String(req.query.status || '').toLowerCase();
     const transactionId = String(req.query.transaction_id || '');
     const reference = String(req.query.tx_ref || '');
-    if (!/^\d+$/.test(transactionId) || !/^betgo_[a-fA-F0-9]{24}_[a-fA-F0-9]{32}$/.test(reference)) {
-      return res.status(400).send(paymentResultPage('Payment not verified', 'The payment details returned by Flutterwave are incomplete or invalid. Do not pay again yet; contact BETGO support to check the transaction.'));
+    if (!PAYMENT_REFERENCE_PATTERN.test(reference)) {
+      paymentLog('payment_return_rejected', req.requestId, { reason: 'bad_reference' });
+      return res.status(400).send(paymentResultPage('Payment not verified', 'This page needs the payment reference from your Flutterwave redirect. Open it from the Flutterwave payment flow. If you were charged, do not pay again; contact BETGO support.'));
     }
-    if (!req.app.locals.config.flutterwaveSecretKey) {
-      return res.status(503).send(paymentResultPage('Payment check unavailable', 'BETGO could not verify this transaction right now. Your payment has not been activated by this page. Please try again later.'));
+    if (redirectStatus === 'cancelled') {
+      return res.send(paymentResultPage('Payment cancelled', 'No payment was taken. Your application is still approved, so you can use the payment link in your approval email whenever you are ready.'));
     }
-    const verified = await verifyFlutterwavePayment(req.app.locals.config, transactionId);
-    if (!verified || String(verified.tx_ref) !== reference || String(verified.id) !== transactionId || verified.status !== 'successful') {
-      return res.status(400).send(paymentResultPage('Payment not confirmed', 'Flutterwave has not confirmed a successful matching transaction. Your subscription has not been activated by this page.'));
+    if (transactionId && !/^\d+$/.test(transactionId)) {
+      paymentLog('payment_return_rejected', req.requestId, { reason: 'bad_transaction_id' });
+      return res.status(400).send(paymentResultPage('Payment not verified', 'The transaction ID returned by Flutterwave is invalid. Do not pay again yet; contact BETGO support to check the transaction.'));
     }
-    const db = req.app.locals.db;
-    const payment = await db.collection('payments').findOne({ reference, provider: 'flutterwave' });
-    if (!payment) return res.status(404).send(paymentResultPage('Payment reference not found', 'The transaction was verified, but BETGO could not match it to an application. Contact support and provide your Flutterwave transaction ID.'));
-    const application = await db.collection('applications').findOne({ _id: payment.applicationId });
-    const amountOk = Number(verified.amount) === Number(payment.amountNgn);
-    const currencyOk = verified.currency === 'NGN';
-    if (!application || !amountOk || !currencyOk) {
-      console.warn('payment mismatch (return)', { reference, applicationFound: Boolean(application), amountOk, currencyOk, got: { amount: verified.amount, currency: verified.currency, email: verified.customer?.email }, expected: { amount: payment.amountNgn, email: application?.email } });
-      return res.status(400).send(paymentResultPage('Payment details need review', 'The verified transaction does not match the expected application, amount, currency, and customer. BETGO has not activated this subscription from the callback. Contact support.'));
+    if (!config.flutterwaveSecretKey) return res.status(503).send(paymentResultPage('Payment check unavailable', 'BETGO could not verify this transaction right now. Your payment has not been activated by this page. Please try again later.'));
+    const verified = transactionId ? await verifyFlutterwavePayment(config, transactionId) : await verifyFlutterwaveByReference(config, reference);
+    if (!verified) {
+      paymentLog('payment_return_rejected', req.requestId, { reason: 'not_confirmed_by_flutterwave', redirectStatus: redirectStatus || null, hadTransactionId: Boolean(transactionId) });
+      return res.status(400).send(paymentResultPage('Payment not confirmed', 'Flutterwave has not confirmed a successful transaction for this reference yet. If you were charged, wait a few minutes and refresh this page; do not pay again.'));
     }
-    if (payment.status === 'paid' && application.status === 'active') {
-      return res.send(paymentResultPage('Payment confirmed', 'Your payment and subscription are confirmed. You can return to BETGO and sign in.'));
+    if (String(verified.tx_ref) !== reference) {
+      paymentLog('payment_return_rejected', req.requestId, { reason: 'reference_mismatch' });
+      return res.status(400).send(paymentResultPage('Payment details need review', 'The verified transaction does not belong to this payment reference. BETGO has not activated anything. Contact support.'));
     }
-    return res.send(paymentResultPage('Payment verified', 'Flutterwave confirms your payment. BETGO is waiting for its secure payment-processing webhook to activate your 30-day subscription and send your login details. Do not pay again. If activation email does not arrive shortly, contact BETGO support.'));
+    const result = await activateVerifiedPayment(req.app.locals.db, { verified, hashPassword, sendEmail: (message) => sendEmail(config, message), appOrigin: config.appOrigin, requestId: req.requestId });
+    if (result.outcome === 'unknown_reference') return res.status(404).send(paymentResultPage('Payment reference not found', 'The transaction was verified, but BETGO could not match it to an application. Contact support and provide your Flutterwave transaction ID.'));
+    if (result.outcome === 'mismatch' || result.outcome === 'needs_review' || result.outcome === 'not_payable') {
+      paymentLog('payment_return_rejected', req.requestId, { reason: result.reason || result.outcome });
+      return res.status(400).send(paymentResultPage('Payment details need review', 'The verified transaction does not match the expected application, amount or currency, so BETGO has not activated this subscription. Contact support.'));
+    }
+    if (result.outcome === 'in_progress') return res.send(paymentResultPage('Payment verified', 'Your payment is confirmed and activation is finishing. Refresh in a minute. Do not pay again.'));
+    const emailNote = result.outcome === 'activated' && result.createdAccount
+      ? (result.emailed ? ' Your login details have been emailed to you.' : ' BETGO could not email your login details yet; it will retry, or contact BETGO support.')
+      : '';
+    return res.send(paymentResultPage('Payment confirmed', `Your payment and 30-day subscription are confirmed.${emailNote} You can return to BETGO and sign in.`));
   } catch (error) { next(error); }
 });
 
@@ -459,65 +473,24 @@ function paymentResultPage(title, message) {
 
 app.post('/api/payments/flutterwave/webhook', async (req, res, next) => {
   try {
-    const secret = req.app.locals.config.flutterwaveSecretHash;
+    const config = req.app.locals.config;
+    const secret = config.flutterwaveSecretHash;
     const signature = req.get('verif-hash') || '';
     if (!secret || !signature || !Buffer.isBuffer(req.body)) return res.status(401).json({ error: { code: 'INVALID_WEBHOOK', message: 'Webhook signature is required.' } });
-    const expected = secret;
-    const suppliedBuffer = Buffer.from(signature); const expectedBuffer = Buffer.from(expected);
+    const suppliedBuffer = Buffer.from(signature); const expectedBuffer = Buffer.from(secret);
     if (suppliedBuffer.length !== expectedBuffer.length || !timingSafeEqual(suppliedBuffer, expectedBuffer)) return res.status(401).json({ error: { code: 'INVALID_WEBHOOK', message: 'Webhook signature is invalid.' } });
-    const event = JSON.parse(req.body.toString('utf8'));
+    let event;
+    try { event = JSON.parse(req.body.toString('utf8')); } catch { return res.status(400).json({ error: { code: 'INVALID_JSON', message: 'Webhook body is not valid JSON.' } }); }
     if (event.event !== 'charge.completed' || event.data?.status !== 'successful' || !event.data?.id || !event.data?.tx_ref) return res.status(200).json({ received: true });
-    const verified = await verifyFlutterwavePayment(req.app.locals.config, event.data.id);
-    if (!verified) return res.status(200).json({ received: true, verified: false });
-    const db = req.app.locals.db;
-    const payment = await db.collection('payments').findOne({ reference: verified.tx_ref });
-    if (!payment) return res.status(200).json({ received: true, alreadyProcessed: true });
-    const application = await db.collection('applications').findOne({ _id: payment.applicationId });
-    const amountOk = Number(verified.amount) === Number(payment.amountNgn);
-    const currencyOk = verified.currency === 'NGN';
-    if (!application || !amountOk || !currencyOk) {
-      console.warn('payment mismatch (webhook)', { reference: verified.tx_ref, applicationFound: Boolean(application), amountOk, currencyOk, got: { amount: verified.amount, currency: verified.currency, email: verified.customer?.email }, expected: { amount: payment.amountNgn, email: application?.email } });
-      return res.status(200).json({ received: true, verified: false });
-    }
-    const emailNormalized = application.emailNormalized;
-    let user = await db.collection('users').findOne({ emailNormalized });
-    let now = new Date();
-    let subscriptionExpiresAt;
-    if (payment.status === 'paid') {
-      if (payment.createdAccount === false || !user || user.mustChangePassword !== true) return res.status(200).json({ received: true, alreadyProcessed: true });
-      // Retry delivery after a transient email-provider failure without extending the paid subscription.
-      const temporaryPassword = randomBytes(18).toString('base64url');
-      await db.collection('users').updateOne({ _id: user._id, mustChangePassword: true }, { $set: { passwordHash: await argon2.hash(temporaryPassword, { type: argon2.argon2id }), temporaryPasswordIssuedAt: now } });
-      subscriptionExpiresAt = latestExpiry(user) || user.subscriptionExpiresAt;
-      await sendEmail(req.app.locals.config, { to: application.email, subject: 'BETGO temporary login details', text: `Hello ${application.fullName},\n\nUsername: ${application.email}\nTemporary password: ${temporaryPassword}\nSubscription expires: ${new Date(subscriptionExpiresAt).toISOString()}\n\nSign in at ${req.app.locals.config.appOrigin} and change this temporary password immediately.` });
-      return res.status(200).json({ received: true, credentialEmailRetried: true });
-    }
-    if (payment.status !== 'pending' || application.status !== 'approved_awaiting_payment') return res.status(200).json({ received: true, alreadyProcessed: true });
-    if (user?.role === 'owner') return res.status(200).json({ received: true, accountExists: true });
-    if (user) {
-      // Existing customer: add this bookmaker (or extend it on renewal) without touching their password or other subscriptions.
-      const grant = grantSubscription(user, application.bookmaker, now);
-      await db.collection('users').updateOne(
-        { _id: user._id, appliedPaymentRefs: { $ne: payment.reference } },
-        { $set: { subscriptions: grant.subscriptions, subscriptionExpiresAt: grant.subscriptionExpiresAt, bookmaker: user.bookmaker || application.bookmaker, updatedAt: now }, $addToSet: { appliedPaymentRefs: payment.reference } }
-      );
-      const refreshed = await db.collection('users').findOne({ _id: user._id });
-      const bookmakerExpiresAt = subscriptionsOf(refreshed).find((item) => item.bookmaker === application.bookmaker)?.expiresAt || grant.bookmakerExpiresAt;
-      await db.collection('payments').updateOne({ _id: payment._id, status: 'pending' }, { $set: { status: 'paid', paidAt: now, flutterwaveTransactionId: verified.id, updatedAt: now, userId: user._id, createdAccount: false } });
-      await db.collection('applications').updateOne({ _id: application._id, status: 'approved_awaiting_payment' }, { $set: { status: 'active', paidAt: now, subscriptionExpiresAt: bookmakerExpiresAt, userId: user._id, updatedAt: now } });
-      await sendEmail(req.app.locals.config, { to: application.email, subject: `BETGO ${application.bookmaker} subscription confirmed`, text: `Hello ${application.fullName},\n\nYour payment of NGN ${payment.amountNgn.toLocaleString('en-NG')} is confirmed. Your ${application.bookmaker} subscription is active until ${new Date(bookmakerExpiresAt).toISOString()}.\n\nSign in at ${req.app.locals.config.appOrigin} with your existing BETGO password. Your other subscriptions are unchanged.` });
-      await writeAudit(db, { action: 'payment.activate_subscription', requestId: req.requestId, details: { applicationId: application._id.toString(), userId: user._id.toString(), bookmaker: application.bookmaker, amountNgn: payment.amountNgn, existingAccount: true } });
-      return res.json({ received: true, activated: true, existingAccount: true });
-    }
-    const temporaryPassword = randomBytes(18).toString('base64url');
-    subscriptionExpiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-    const passwordHash = await argon2.hash(temporaryPassword, { type: argon2.argon2id });
-    const userResult = await db.collection('users').insertOne({ email: application.email, emailNormalized, fullName: application.fullName, passwordHash, role: 'member', bookmaker: application.bookmaker, createdAt: now, disabledAt: null, authVersion: 1, subscriptionStartedAt: now, subscriptionExpiresAt, subscriptions: [{ bookmaker: application.bookmaker, startedAt: now, expiresAt: subscriptionExpiresAt }], appliedPaymentRefs: [payment.reference], mustChangePassword: true, temporaryPasswordIssuedAt: now, applicationId: application._id });
-    await db.collection('payments').updateOne({ _id: payment._id, status: 'pending' }, { $set: { status: 'paid', paidAt: now, flutterwaveTransactionId: verified.id, updatedAt: now, userId: userResult.insertedId, createdAccount: true } });
-    await db.collection('applications').updateOne({ _id: application._id, status: 'approved_awaiting_payment' }, { $set: { status: 'active', paidAt: now, subscriptionExpiresAt, userId: userResult.insertedId, updatedAt: now } });
-    await sendEmail(req.app.locals.config, { to: application.email, subject: 'BETGO payment confirmed — temporary login', text: `Hello ${application.fullName},\n\nYour payment of NGN ${payment.amountNgn.toLocaleString('en-NG')} is confirmed. Your ${application.bookmaker} subscription is active until ${subscriptionExpiresAt.toISOString()}.\n\nUsername: ${application.email}\nTemporary password: ${temporaryPassword}\n\nSign in at ${req.app.locals.config.appOrigin}. Change this temporary password immediately and do not share it. Your subscription expires 30 days after payment confirmation.` });
-    await writeAudit(db, { action: 'payment.activate_subscription', requestId: req.requestId, details: { applicationId: application._id.toString(), userId: userResult.insertedId.toString(), amountNgn: payment.amountNgn } });
-    res.json({ received: true, activated: true });
+    // The webhook body is only a pointer. Everything that decides activation comes from Flutterwave's own verify call.
+    const verified = await verifyFlutterwavePayment(config, event.data.id);
+    if (!verified || String(verified.id) !== String(event.data.id)) return res.status(200).json({ received: true, verified: false });
+    const result = await activateVerifiedPayment(req.app.locals.db, { verified, hashPassword, sendEmail: (message) => sendEmail(config, message), appOrigin: config.appOrigin, requestId: req.requestId });
+    if (result.outcome === 'mismatch' || result.outcome === 'needs_review' || result.outcome === 'not_payable') paymentLog('payment_webhook_rejected', req.requestId, { reference: verified.tx_ref, reason: result.reason || result.outcome });
+    // A non-2xx makes Flutterwave retry; only do that while a new member still has not received their login email.
+    const loginEmailPending = (result.outcome === 'activated' && result.createdAccount && result.emailed === false) || (result.credentialEmailRetried && result.emailed === false);
+    if (loginEmailPending) return res.status(503).json({ received: true, activated: true, credentialEmailPending: true });
+    res.status(200).json({ received: true, outcome: result.outcome, ...(result.outcome === 'activated' ? { activated: true } : {}) });
   } catch (error) { next(error); }
 });
 
@@ -594,6 +567,8 @@ app.get('/api/admin/status', requireAuthLazy, requireOwner, async (req, res) => 
   res.json({
     company: 'BETGO',
     accountCount,
+    email: (({ mode, ready, message }) => ({ mode, ready, message }))(emailSenderStatus(req.app.locals.config)),
+    payments: { flutterwaveConfigured: Boolean(req.app.locals.config.flutterwaveSecretKey), webhookSecretConfigured: Boolean(req.app.locals.config.flutterwaveSecretHash), callbackUrl: req.app.locals.config.flutterwaveCallbackUrl },
     bookmakerIntegrations: {
       enabled: false,
       reason: 'No official API or partner authorization has been verified.'

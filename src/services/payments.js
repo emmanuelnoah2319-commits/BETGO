@@ -33,3 +33,15 @@ export async function verifyFlutterwavePayment(config, transactionId) {
   if (!response.ok || payload.status !== 'success' || payload.data?.status !== 'successful') return null;
   return payload.data;
 }
+
+// Used by the return page when Flutterwave redirects without a transaction_id.
+export async function verifyFlutterwaveByReference(config, reference) {
+  if (!config.flutterwaveSecretKey) throw new Error('Payment verification is not configured.');
+  if (!/^betgo_[a-fA-F0-9]{24}_[a-fA-F0-9]{32}$/.test(String(reference))) return null;
+  const response = await fetch(`https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(reference)}`, {
+    headers: { Authorization: `Bearer ${config.flutterwaveSecretKey}` }
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.status !== 'success' || payload.data?.status !== 'successful') return null;
+  return payload.data;
+}

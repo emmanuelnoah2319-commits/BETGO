@@ -5,7 +5,7 @@ import { recoverPendingReservationReleases } from './services/instruction-reserv
 import { startSubmissionRecoveryWorker } from './services/submission-recovery-worker.js';
 import { ensureOperationalControl } from './services/operational-control.js';
 import { startExpiryReminderWorker } from './services/expiry-reminders.js';
-import { sendEmail } from './services/notifications.js';
+import { emailSenderStatus, sendEmail } from './services/notifications.js';
 import app from './app.js';
 
 const config = loadConfig();
@@ -18,9 +18,12 @@ const reservationRecovery = await recoverPendingReservationReleases(db);
 if (reservationRecovery.checked > 0) console.info(JSON.stringify({ level: 'info', event: 'reservation_recovery', ...reservationRecovery }));
 const stopSubmissionRecoveryWorker = startSubmissionRecoveryWorker(db, { logger: console });
 app.locals.getSubmissionRecoveryWorkerStatus = stopSubmissionRecoveryWorker.getStatus;
-const stopExpiryReminderWorker = config.resendApiKey && config.emailFrom
+const emailStatus = emailSenderStatus(config);
+if (!emailStatus.ready) console.warn(JSON.stringify({ level: 'warn', event: 'email_sender_not_ready', mode: emailStatus.mode, message: emailStatus.message }));
+else if (emailStatus.mode === 'testing') console.warn(JSON.stringify({ level: 'warn', event: 'email_testing_sender', message: emailStatus.message }));
+const stopExpiryReminderWorker = emailStatus.ready
   ? startExpiryReminderWorker(db, { appOrigin: config.appOrigin, sendEmail: (message) => sendEmail(config, message), logger: console })
-  : (console.warn(JSON.stringify({ level: 'warn', event: 'expiry_reminders_disabled', reason: 'RESEND_API_KEY and EMAIL_FROM are not set' })), () => {});
+  : (console.warn(JSON.stringify({ level: 'warn', event: 'expiry_reminders_disabled', reason: emailStatus.message })), () => {});
 
 const server = app.listen(config.port, () => {
   console.info(JSON.stringify({ level: 'info', event: 'server_started', port: config.port, env: config.nodeEnv }));
