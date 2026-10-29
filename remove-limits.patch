@@ -31,4 +31,4 @@ diff --git a/src/app.js b/src/app.js
 +  return { ...DEFAULT_SAFETY_POLICY };
  }
  
- function publicSafetyPolicy_PLACEHOLDER
+ app.get('/api/bet-instructions', requireAuthLazy, async (req, res) => {
