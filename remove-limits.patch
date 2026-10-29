@@ -1,0 +1,34 @@
+diff --git a/src/app.js b/src/app.js
+--- a/src/app.js
++++ b/src/app.js
+@@ -89,12 +89,13 @@
+   }
+ });
+ 
++// No spending limits: these values are so high that they never block a ticket.
+ const DEFAULT_SAFETY_POLICY = Object.freeze({
+-  maxStakeMinor: 500_000,
+-  dailyStakeLimitMinor: 2_000_000,
+-  dailyLossLimitMinor: 1_000_000,
+-  perAccountDailyStakeLimitMinor: 750_000,
+-  maxOpenInstructions: 5
++  maxStakeMinor: 1_000_000_000_000_000,
++  dailyStakeLimitMinor: 1_000_000_000_000_000,
++  dailyLossLimitMinor: 1_000_000_000_000_000,
++  perAccountDailyStakeLimitMinor: 1_000_000_000_000_000,
++  maxOpenInstructions: 1_000_000
+ });
+ 
+ 
+@@ -779,9 +780,8 @@
+ });
+ 
+ function publicSafetyPolicy(saved) {
+-  const policy = { ...DEFAULT_SAFETY_POLICY };
+-  if (saved) for (const key of Object.keys(DEFAULT_SAFETY_POLICY)) if (Number.isInteger(saved[key])) policy[key] = saved[key];
+-  return policy;
++  // Limits saved by earlier versions are ignored on purpose, so an old cap can never block a ticket.
++  return { ...DEFAULT_SAFETY_POLICY };
+ }
+ 
+ function publicSafetyPolicy_PLACEHOLDER
