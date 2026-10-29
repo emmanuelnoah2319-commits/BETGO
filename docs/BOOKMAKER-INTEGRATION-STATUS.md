@@ -1,5 +1,9 @@
 # BETGO bookmaker integration feasibility (2026-10-28)
 
+## Current implementation scope
+
+As of 2026-10-29, BETGO is implementing account-connection work for **SportyBet only**. The integration dashboard lists only SportyBet. Existing Football.com Nigeria subscription and read-only data features are intentionally preserved for compatibility, but Football.com is outside the current account-connection scope. No provider connector is enabled.
+
 ## Goal
 
 BETGO's required integration is an account-level betting interface that can submit a stake to a target bookmaker, then reconcile accepted/rejected/unknown outcomes and later settlement. A fixtures/odds API is not sufficient.
@@ -16,7 +20,7 @@ BETGO's required integration is an account-level betting interface that can subm
 - SportyBet community connector description (not official): https://github.com/UbongErnest/Sportybet-mcp
 - SportyBet API discussion, updated October 2026 (secondary source): https://sportapi.net/blog/sportybet-api.html
 
-These sources do not establish a permitted real-money bet-placement API for any of the five target platforms. Search results, reverse-engineered website endpoints, affiliate links, booking-code creation and sports-data feeds must not be represented as a bookmaker bet-placement API.
+These sources do not establish a permitted real-money bet-placement API for SportyBet. Search results, reverse-engineered website endpoints, affiliate links, booking-code creation and sports-data feeds must not be represented as a bookmaker bet-placement API.
 
 ## Next external action
 
@@ -34,7 +38,7 @@ A target can be marked available only after all of these are verified:
 6. Credentials are stored server-side in a secret manager, never in the browser or account notes.
 7. Stake limits, explicit enablement, emergency stop, audit events and idempotency are enforced before the live connector is enabled.
 
-Until then, all five connectors remain unavailable. The app must not submit to undocumented endpoints or claim a wager succeeded without provider confirmation.
+Until then, the SportyBet connector remains unavailable. Other legacy bookmaker functionality is not changed by this scoped increment. The app must not submit to undocumented endpoints or claim a wager succeeded without provider confirmation.
 
 ## SportyBet odds-to-instruction handoff (2026-10-28)
 

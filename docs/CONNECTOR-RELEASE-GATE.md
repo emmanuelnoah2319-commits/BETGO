@@ -25,7 +25,7 @@ Even when all checks pass, the result is `eligible_for_release_review`, not `ena
 
 ## Current status
 
-All five target bookmakers remain unavailable. No provider has supplied verified placement documentation in this repository, and no request has been sent automatically. See `BOOKMAKER-API-ACCESS-REQUESTS.md` for the owner-led outreach process and `BOOKMAKER-INTEGRATION-STATUS.md` for the current evidence summary.
+SportyBet, the current integration scope, remains unavailable. Existing Football.com Nigeria read-only features are preserved but are outside this increment. No provider has supplied verified placement documentation in this repository, and no request has been sent automatically. See `BOOKMAKER-API-ACCESS-REQUESTS.md` for the owner-led outreach process and `BOOKMAKER-INTEGRATION-STATUS.md` for the current evidence summary.
 
 ## Tests
 

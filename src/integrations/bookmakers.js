@@ -1,7 +1,11 @@
-const PLATFORMS = Object.freeze([
+const SUPPORTED_PLATFORMS = Object.freeze([
   'SportyBet',
   'Football.com Nigeria'
 ]);
+
+// BETGO is deliberately scoping account-connection integration work to SportyBet first.
+// Other existing bookmaker features (subscriptions and read-only data) remain untouched.
+const ACTIVE_INTEGRATION_SCOPE = Object.freeze(['SportyBet']);
 
 /**
  * Registry for bookmaker connectors. A platform must not be marked available
@@ -9,7 +13,7 @@ const PLATFORMS = Object.freeze([
  * behavior have been verified. No fallback to undocumented calls is attempted.
  */
 export function listBookmakerIntegrations() {
-  return PLATFORMS.map((name) => ({
+  return ACTIVE_INTEGRATION_SCOPE.map((name) => ({
     name,
     status: 'unavailable',
     capabilities: [],
@@ -18,12 +22,12 @@ export function listBookmakerIntegrations() {
     balanceLookup: false,
     betStatusLookup: false,
     automaticBettingEnabled: false,
-    reason: 'No verified, permitted third-party bet-placement interface is configured for this bookmaker.'
+    reason: 'SportyBet account connection and bet placement remain unavailable until a verified, permitted connector is configured.'
   }));
 }
 
 export function getBookmakerConnector(platform) {
-  if (!PLATFORMS.includes(platform)) {
+  if (!SUPPORTED_PLATFORMS.includes(platform)) {
     const error = new Error('Unsupported bookmaker platform.');
     error.code = 'UNSUPPORTED_BOOKMAKER';
     throw error;
@@ -34,4 +38,6 @@ export function getBookmakerConnector(platform) {
   throw error;
 }
 
-export const supportedBookmakerPlatforms = PLATFORMS;
+// Keep existing account/subscription routes compatible while exposing only the
+// current integration scope in the integrations dashboard.
+export const supportedBookmakerPlatforms = SUPPORTED_PLATFORMS;
