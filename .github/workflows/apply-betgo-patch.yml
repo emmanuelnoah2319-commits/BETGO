@@ -1,0 +1,79 @@
+name: Apply BETGO Patch
+
+on:
+  workflow_dispatch:
+    inputs:
+      patch:
+        description: "Patch filename in repository root"
+        required: true
+        default: "auto-stake.patch"
+        type: string
+      commit_message:
+        description: "Commit message"
+        required: true
+        default: "Auto-calculate stake from max profit"
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-betgo-patch-main
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate and apply patch
+        env:
+          PATCH: ${{ inputs.patch }}
+        run: |
+          set -euo pipefail
+          case "$PATCH" in
+            ""|*/*|*..*) echo "Give a filename in the repository root."; exit 1 ;;
+            *.patch|*.diff) ;;
+            *) echo "The file must end in .patch or .diff."; exit 1 ;;
+          esac
+          test -f "$PATCH" || { echo "Not found: $PATCH"; exit 1; }
+          if grep -En '^(\+\+\+|---) [ab]/(\.github/|\.env)' "$PATCH"; then
+            echo "Patches may not touch .github or .env files."
+            exit 1
+          fi
+          git apply --check --recount --ignore-whitespace "$PATCH"
+          git apply --verbose --recount --ignore-whitespace "$PATCH"
+          git rm -f --quiet "$PATCH"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Check JavaScript syntax
+        run: npm run check
+
+      - name: Run tests
+        run: npm test
+
+      - name: Commit and push
+        env:
+          COMMIT_MESSAGE: ${{ inputs.commit_message }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "$COMMIT_MESSAGE"
+          git push origin HEAD:main
