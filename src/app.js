@@ -13,6 +13,7 @@ import { writeAudit } from './services/audit.js';
 import { getBookmakerConnector, listBookmakerIntegrations } from './integrations/bookmakers.js';
 import { applyConnectorCheck, connectionUpdate } from './services/account-connection.js';
 import { isBettableStatus, sportyBetDataClient } from './integrations/sportybet-data.js';
+import { footballComDataClient } from './integrations/footballcom-data.js';
 import { CANCELLABLE_INSTRUCTION_STATUSES, transitionInstructionStatus } from './services/instruction-lifecycle.js';
 import { recoverPendingReservationReleases, releaseInstructionReservation } from './services/instruction-reservations.js';
 import { getOperationalControl, setEmergencyStop } from './services/operational-control.js';
@@ -957,6 +958,22 @@ app.get('/api/sportybet/fixtures', requireAuthLazy, async (req, res) => {
     res.json(data);
   } catch (error) {
     res.status(error.status || 502).json({ error: { code: error.code || 'SPORTYBET_UNAVAILABLE', message: error.message || 'SportyBet data is temporarily unavailable.' } });
+  }
+});
+
+// Read-only Football.com Nigeria data adapter (shared booking codes). No account login and no wager placement.
+app.get('/api/footballcom/booking-codes', requireAuthLazy, async (req, res) => {
+  try {
+    if (!canUseBookmaker(req.user, 'Football.com Nigeria')) return res.status(403).json({ error: { code: 'BOOKMAKER_NOT_IN_SUBSCRIPTION', message: 'Football.com data is part of the Football.com Nigeria subscription.' } });
+    const limit = req.query.limit === undefined ? 20 : Number(req.query.limit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+      return res.status(400).json({ error: { code: 'INVALID_QUERY', message: 'limit must be 1–50.' } });
+    }
+    const data = await footballComDataClient.getBookingCodes({ limit });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(data);
+  } catch (error) {
+    res.status(error.status || 502).json({ error: { code: error.code || 'FOOTBALLCOM_UNAVAILABLE', message: error.message || 'Football.com data is temporarily unavailable.' } });
   }
 });
 

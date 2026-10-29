@@ -20,7 +20,7 @@ function liveScore(event) {
   return home != null && away != null ? `${home} - ${away}` : '';
 }
 
-function normalizeEvent(event, tournament) {
+export function normalizeEvent(event, tournament) {
   if (!event || typeof event.eventId !== 'string' || !event.eventId.startsWith('sr:match:')) return null;
   if (!tournament && event.sport?.category) tournament = { name: event.sport.category.tournament?.name, categoryName: event.sport.category.name };
   const start = Number(event.estimateStartTime);
