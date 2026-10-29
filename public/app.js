@@ -7,7 +7,7 @@ let sportyAccounts = [];
 let openGame = null;
 let liveTimer = null;
 let liveRefreshing = false;
-const LIVE_REFRESH_MS = 5000;
+const LIVE_REFRESH_MS = 1000;
 const ticket = { legs: [], submitKey: null, submitPayload: null };
 
 const koboToNaira = (value) => (Number(value) / 100).toFixed(2);
@@ -327,12 +327,28 @@ const kickoffText = (iso) => (iso ? new Date(iso).toLocaleString('en-NG', { week
 
 function liveBadge(game) {
   const wrap = element('span', 'live-badge');
-  wrap.append(element('span', 'live-dot'), document.createTextNode(['LIVE', game.score, game.clock].filter(Boolean).join(' · ')));
+  wrap.dataset.eventId = game.eventId || '';
+  wrap.append(element('span', 'live-dot'), document.createTextNode(''));
+  setBadge(wrap, game);
   return wrap;
+}
+// A live badge remembers when its clock was read, so it can count on by itself between server updates.
+function setBadge(wrap, game) {
+  wrap.dataset.score = game.score || ''; wrap.dataset.clock = game.clock || ''; wrap.dataset.status = game.matchStatus || ''; wrap.dataset.at = String(Date.now());
+  paintBadge(wrap);
+}
+function paintBadge(wrap) {
+  let clock = wrap.dataset.clock || '';
+  const parts = /^(\d+):(\d{2})$/.exec(clock);
+  if (parts && !/half\s*time|break|pause|end|interrupt/i.test(wrap.dataset.status || '')) {
+    const seconds = Number(parts[1]) * 60 + Number(parts[2]) + Math.floor((Date.now() - Number(wrap.dataset.at)) / 1000);
+    clock = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+  }
+  wrap.lastChild.textContent = ['LIVE', wrap.dataset.score, clock].filter(Boolean).join(' · ');
 }
 
 function stopLiveRefresh() { if (liveTimer) { clearInterval(liveTimer); liveTimer = null; } }
-// A live game's odds list refreshes itself (every 5 s) while it is open and visible. Ticket selections keep the odds you tapped until you
+// A live game's odds list refreshes itself (every second) while it is open and visible. Ticket selections keep the odds you tapped until you
 // press "Refresh odds" or save, so a price never changes under you without notice.
 function startLiveRefresh() {
   stopLiveRefresh();
@@ -341,10 +357,34 @@ function startLiveRefresh() {
   liveTimer = setInterval(async () => {
     if (liveRefreshing || document.hidden || !openGame || openGame.eventId !== eventId || $('#markets-section').hidden || $('#markets-section').classList.contains('view-off')) return;
     liveRefreshing = true; // never stack a new request on a slow one
-    try { const fresh = await fetchGame(eventId); if (openGame?.eventId === eventId) { openGame = fresh; renderMarkets(); if (!fresh.isLive) stopLiveRefresh(); } } catch { /* keep the last odds on screen; the next tick retries */ }
+    try {
+      const fresh = await fetchGame(eventId);
+      if (openGame?.eventId === eventId) {
+        const changed = JSON.stringify(fresh.markets) !== JSON.stringify(openGame.markets) || fresh.score !== openGame.score || fresh.isLive !== openGame.isLive || fresh.complete !== openGame.complete;
+        openGame = fresh;
+        if (changed) renderMarkets(); else updateMarketsMeta();
+        for (const badge of document.querySelectorAll(`.live-badge[data-event-id="${eventId}"]`)) setBadge(badge, fresh);
+        syncLegsFromOpenGame(fresh);
+        if (!fresh.isLive) stopLiveRefresh();
+      }
+    } catch { /* keep the last odds on screen; the next tick retries */ }
     finally { liveRefreshing = false; }
   }, LIVE_REFRESH_MS);
 }
+
+setInterval(() => { if (!document.hidden) for (const badge of document.querySelectorAll('.live-badge[data-at]')) paintBadge(badge); }, 1000);
+let liveCardsRefreshing = false;
+setInterval(async () => {
+  const badges = [...document.querySelectorAll('.live-badge[data-event-id]')];
+  if (liveCardsRefreshing || document.hidden || !badges.length) return;
+  liveCardsRefreshing = true;
+  try {
+    const data = await request('/api/sportybet/live');
+    const byId = new Map(data.fixtures.map((game) => [game.eventId, game]));
+    for (const badge of badges) { const game = byId.get(badge.dataset.eventId); if (game && badge.dataset.eventId !== openGame?.eventId) setBadge(badge, game); }
+  } catch { /* keep what is on screen; the next tick retries */ }
+  finally { liveCardsRefreshing = false; }
+}, 5000);
 
 function resetWorkspace() {
   stopLiveRefresh(); openGame = null; sportyAccounts = [];
@@ -401,12 +441,30 @@ async function openGameMarkets(eventId) {
   $('#markets-section').hidden = false; $('#markets-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+function updateMarketsMeta() {
+  if (!openGame) return;
+  const when = openGame.isLive ? ['In play', openGame.score, openGame.clock].filter(Boolean).join(' · ') : `Kick-off ${kickoffText(openGame.startTime)}`;
+  $('#markets-meta').textContent = `${when} · odds fetched ${new Date(openGame.fetchedAt).toLocaleTimeString()}${openGame.isLive ? ` · updates every ${LIVE_REFRESH_MS / 1000} seconds` : ''} · tap an odd to add it to your ticket.`;
+}
+
+// Ticket selections on the open game follow its odds every second.
+function syncLegsFromOpenGame(game) {
+  let changed = false; let removed = 0;
+  for (const leg of ticket.legs.filter((item) => item.eventId === game.eventId)) {
+    const market = activeMarket(game.markets, leg);
+    const outcome = market?.outcomes.find((item) => item.outcomeId === leg.outcomeId && usableOdds(item));
+    if (outcome && Math.abs(Number(outcome.odds) - leg.oddsDecimal) > 0.000001) { leg.oddsDecimal = Number(outcome.odds); changed = true; }
+    else if (!outcome) { ticket.legs = ticket.legs.filter((item) => item !== leg); removed += 1; changed = true; }
+  }
+  if (removed) showMessage('ticket-message', `${removed} selection(s) removed because SportyBet closed them.`, true);
+  if (changed) { renderMarkets(); renderTicket(); }
+}
+
 function renderMarkets() {
   if (!openGame) return;
   $('#markets-title').textContent = openGame.label;
   $('#markets-eyebrow').textContent = openGame.isLive ? 'LIVE ODDS' : 'ODDS';
-  const when = openGame.isLive ? ['In play', openGame.score, openGame.clock].filter(Boolean).join(' · ') : `Kick-off ${kickoffText(openGame.startTime)}`;
-  $('#markets-meta').textContent = `${when} · odds fetched ${new Date(openGame.fetchedAt).toLocaleTimeString()}${openGame.isLive ? ` · updates every ${LIVE_REFRESH_MS / 1000} seconds` : ''} · tap an odd to add it to your ticket.`;
+  updateMarketsMeta();
   const notices = [];
   if (openGame.complete === false) notices.push('SportyBet only returned its core markets for this game right now, so some markets may be missing.');
   { const counts = {}; for (const m of openGame.markets) counts[m.status] = (counts[m.status] || 0) + 1; notices.push(`[debug] ${openGame.markets.length} markets received, status counts ${JSON.stringify(counts)}, with usable odds: ${openGame.markets.filter((m) => m.outcomes.some(usableOdds)).length}`); }  if (openGame.isLive) notices.push('This game is live. Odds can change or close at any moment. When you save, a lower price is refused and you will be asked to review.');
@@ -505,8 +563,8 @@ for (const id of ['#ticket-stake', '#ticket-max-profit', '#ticket-account']) $(i
 $('#ticket-clear').addEventListener('click', () => { ticket.legs = []; showMessage('ticket-message'); renderMarkets(); renderTicket(); });
 
 // Re-reads every game on the ticket and updates odds. Selections that closed or whose game started are removed.
-async function refreshTicketOdds() {
-  const ids = [...new Set(ticket.legs.map((leg) => leg.eventId))]; const notes = { changed: 0, removed: 0 };
+async function refreshTicketOdds(skipEventId = null, quiet = false) {
+  const ids = [...new Set(ticket.legs.map((leg) => leg.eventId))].filter((id) => id !== skipEventId); const notes = { changed: 0, removed: 0 };
   for (const eventId of ids) {
     let game = null;
     try { game = await fetchGame(eventId); } catch { /* an unreadable game is treated as closed below */ }
@@ -518,7 +576,7 @@ async function refreshTicketOdds() {
       if (Math.abs(Number(outcome.odds) - leg.oddsDecimal) > 0.000001) { leg.oddsDecimal = Number(outcome.odds); notes.changed += 1; }
     }
   }
-  renderMarkets(); renderTicket();
+  if (!quiet || notes.changed || notes.removed) { renderMarkets(); renderTicket(); }
   return notes;
 }
 $('#ticket-refresh').addEventListener('click', async () => {
@@ -527,16 +585,17 @@ $('#ticket-refresh').addEventListener('click', async () => {
   finally { updateTicketSummary(); }
 });
 
-// Ticket odds follow SportyBet on their own: every 10 s while the ticket is on screen. A closed market drops its selection.
-const TICKET_REFRESH_MS = 10000;
+// Ticket odds follow SportyBet on their own: every second while the ticket is on screen. A closed market drops its selection.
+// The game that is open and live is already refreshed every second above, so it is skipped here.
+const TICKET_REFRESH_MS = 1000;
 let ticketAutoRefreshing = false;
 setInterval(async () => {
   if (ticketAutoRefreshing || document.hidden || !ticket.legs.length || $('#ticket-form').offsetParent === null) return;
   if ($('#ticket-submit').textContent === 'Checking odds…' || $('#ticket-refresh').disabled) return; // not while saving or refreshing by hand
   ticketAutoRefreshing = true;
   try {
-    const notes = await refreshTicketOdds();
-    if (notes.changed || notes.removed) showMessage('ticket-message', `Odds updated: ${notes.changed} changed, ${notes.removed} removed.`, notes.removed > 0);
+    const notes = await refreshTicketOdds(liveTimer && !$('#markets-section').hidden && !$('#markets-section').classList.contains('view-off') ? openGame?.eventId : null, true);
+    if (notes.removed) showMessage('ticket-message', `${notes.removed} selection(s) removed because SportyBet closed them.`, true);
   } catch { /* keep the current odds; the next tick retries */ }
   finally { ticketAutoRefreshing = false; }
 }, TICKET_REFRESH_MS);

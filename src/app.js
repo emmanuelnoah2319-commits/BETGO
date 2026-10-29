@@ -979,14 +979,41 @@ app.get('/api/sportybet/search', requireAuthLazy, gameSearchLimiter, async (req,
   }
 });
 
+// Odds for one game are shared for ~1.5 s: many members polling the same game cost SportyBet one request, not one each.
+// Slip verification does not use this; it always reads fresh odds.
+const eventOddsShared = new Map();
+const EVENT_ODDS_SHARE_MS = 1500;
+function sharedEventMarkets(eventId) {
+  const hit = eventOddsShared.get(eventId);
+  if (hit && hit.expiresAt > Date.now()) return hit.promise;
+  const promise = sportyBetDataClient.getMarkets(eventId);
+  const entry = { promise, expiresAt: Date.now() + EVENT_ODDS_SHARE_MS };
+  eventOddsShared.set(eventId, entry);
+  promise.catch(() => { if (eventOddsShared.get(eventId) === entry) eventOddsShared.delete(eventId); });
+  if (eventOddsShared.size > 500) for (const [key, value] of eventOddsShared) if (value.expiresAt <= Date.now()) eventOddsShared.delete(key);
+  return promise;
+}
+
 app.get('/api/sportybet/events/:eventId/markets', requireAuthLazy, async (req, res) => {
   try {
     if (!canUseBookmaker(req.user, 'SportyBet')) return res.status(403).json({ error: { code: 'BOOKMAKER_NOT_IN_SUBSCRIPTION', message: 'SportyBet data is part of the SportyBet subscription.' } });
-    const data = await sportyBetDataClient.getMarkets(req.params.eventId);
+    const data = await sharedEventMarkets(req.params.eventId);
     res.setHeader('Cache-Control', 'no-store');
     res.json(data);
   } catch (error) {
     res.status(error.status || 502).json({ error: { code: error.code || 'SPORTYBET_UNAVAILABLE', message: error.message || 'SportyBet markets are temporarily unavailable.' } });
+  }
+});
+
+// Scores and clocks of games that are in play right now (one shared, briefly cached read).
+app.get('/api/sportybet/live', requireAuthLazy, async (req, res) => {
+  try {
+    if (!canUseBookmaker(req.user, 'SportyBet')) return res.status(403).json({ error: { code: 'BOOKMAKER_NOT_IN_SUBSCRIPTION', message: 'SportyBet data is part of the SportyBet subscription.' } });
+    const data = await sportyBetDataClient.getLiveFixtures();
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ fetchedAt: data.fetchedAt, fixtures: data.fixtures.map(({ eventId, score, clock, matchStatus, isLive }) => ({ eventId, score, clock, matchStatus, isLive })) });
+  } catch (error) {
+    res.status(error.status || 502).json({ error: { code: error.code || 'SPORTYBET_UNAVAILABLE', message: error.message || 'SportyBet data is temporarily unavailable.' } });
   }
 });
 
